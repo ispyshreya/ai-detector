@@ -1,3 +1,9 @@
 .env
 node_modules/
 dist/
+.venv/
+detector-trainer/.venv/
+__pycache__/
+*.pyc
+*.log
+detector-trainer/output/final_model.pt
