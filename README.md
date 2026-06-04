@@ -1,91 +1,103 @@
-# Veil - AI Image Authenticity Checker
+# Veil
 
-Veil helps users check whether an image may be AI-generated, edited, or risky to trust. It presents one plain-language Veil score, a confidence rating, scam-aware next steps, and optional visual warning-sign explanations.
+Veil is an image-authenticity dashboard for evaluating whether an uploaded image may be AI-generated, manipulated, or risky to trust. It combines detector outputs into a single user-facing score and presents the result in plain language for authenticity review, scam prevention, and media verification workflows.
 
-## Features
+## Overview
 
-- Image upload for JPG, JPEG, PNG, and WEBP files.
-- Single user-facing Veil authenticity score.
-- Confidence score based on detector agreement and signal strength.
-- Plain-language verdicts: `Looks authentic`, `Needs review`, and `High scam risk`.
-- Scam-focused guidance for images used in messages, profiles, posts, or urgent requests.
-- History page for recent scans.
-- Settings page for local endpoint configuration.
-- Optional local visual explanation endpoint for image-specific warning signs.
+Modern image scams often rely on synthetic profile photos, edited screenshots, fabricated product images, or AI-generated evidence. Veil is designed to make those risks easier to assess by turning model signals into a simple review experience:
+
+- a single Veil authenticity score
+- a confidence rating
+- a plain-language risk verdict
+- visual warning-sign explanations
+- practical next steps for verification
+
+The application is intended to support human review. It should not be treated as definitive proof that an image is real or fake.
+
+## Key Features
+
+- **Image authenticity scoring**: Upload an image and receive a normalized Veil score.
+- **Plain-language verdicts**: Results are presented as `Looks authentic`, `Needs review`, or `High scam risk`.
+- **Confidence rating**: Veil estimates how strongly to trust the result based on signal strength and detector agreement.
+- **Visual warning signs**: Optional local vision-language analysis explains why an image may have been flagged.
+- **Scam-aware guidance**: Results include verification steps for images tied to money, identity, dating, news, or urgent requests.
+- **Scan history**: Recent scans are recorded in the session for quick comparison.
+- **Local-first architecture**: The frontend can connect to a local detector API for private model inference.
 
 ## Architecture
 
-The React frontend calls two local API routes:
+Veil is a Vite + React frontend that communicates with detector services through HTTP endpoints.
 
-- `POST /predict` returns the local detector score.
-- `POST /explain` returns optional visual explanation text.
+```text
+User upload
+   |
+   v
+React dashboard
+   |
+   |-- Local detector API: /predict
+   |-- Local visual explanation API: /explain
+   |-- Optional external detector: Sightengine
+   |
+   v
+Veil score + confidence + explanation
+```
 
-The app can also call Sightengine from the browser when credentials are configured. Veil combines the detector outputs into one score for the user.
+The frontend expects compatible API endpoints but does not require model files to be committed to the repository.
 
-## Environment Variables
+## Repository Structure
 
-Copy `.env.example` to `.env`:
+```text
+.
+├── app.jsx              # Main React application
+├── main.jsx             # React entry point
+├── index.html           # Vite HTML shell
+├── styles.css           # Application styles
+├── vite.config.js       # Vite configuration
+├── package.json         # Frontend scripts and dependencies
+├── .env.example         # Environment variable template
+└── detector-trainer/    # Local training/API workspace, kept local if desired
+```
+
+## Configuration
+
+Create a local `.env` file from the example:
 
 ```powershell
 copy .env.example .env
 ```
 
-Configure:
+Configure the detector endpoints and optional Sightengine credentials:
 
 ```env
-VITE_SIGHTENGINE_API_USER="your_sightengine_user"
-VITE_SIGHTENGINE_API_SECRET="your_sightengine_secret"
 VITE_CUSTOM_API_URL="http://127.0.0.1:8000/predict"
 VITE_EXPLANATION_API_URL="http://127.0.0.1:8000/explain"
 VITE_CUSTOM_API_KEY=""
+
+VITE_SIGHTENGINE_API_USER="your_sightengine_user"
+VITE_SIGHTENGINE_API_SECRET="your_sightengine_secret"
 ```
 
-## Run the Frontend
+## Development
 
-Install dependencies and start the Vite development server:
+Install dependencies:
 
 ```powershell
 npm install
+```
+
+Start the development server:
+
+```powershell
 npm run dev
 ```
 
-The app is served at `http://127.0.0.1:5173/` by default.
-
-## Local Detector API
-
-This repo expects a local model API running on port `8000`. The trainer/API code and model files can be kept local and are not required for the frontend repository to build.
-
-Expected endpoints:
+By default, Vite serves the app at:
 
 ```text
-GET  /health
-POST /predict
-POST /explain
+http://127.0.0.1:5173/
 ```
 
-`/predict` should return a JSON response with a `genai` score from `0` to `1`.
-
-`/explain` should return:
-
-```json
-{
-  "explanation": "Short visual warning-sign explanation",
-  "note": "Visual explanations are AI-generated and should be treated as possible warning signs, not proof."
-}
-```
-
-## Detector Trainer
-
-The companion `detector-trainer/` workspace is used locally to:
-
-- split image data into train/validation folders
-- train the fake-vs-real ResNet detector
-- evaluate the saved checkpoint on a held-out test set
-- run the FastAPI model server that exposes `/predict` and `/explain`
-
-The frontend can still build without this folder as long as compatible API endpoints are running.
-
-## Build
+Create a production build:
 
 ```powershell
 npm run build
@@ -97,16 +109,67 @@ Preview the production build:
 npm run preview
 ```
 
-## Security Notes
+## Local API Contract
 
-- Do not commit `.env`.
-- Rotate any credentials that were accidentally committed.
-- Do not expose the local API directly to the public internet without authentication or a private tunnel.
-- Visual explanations are assistive, not proof. Veil should support human review rather than replace it.
+Veil expects a local API server on port `8000` by default.
 
-## Tech Stack
+### `GET /health`
+
+Returns API status and model metadata.
+
+### `POST /predict`
+
+Accepts a multipart image upload with the field name `media`.
+
+Expected response:
+
+```json
+{
+  "genai": 0.87,
+  "label": "FAKE",
+  "confidence": 0.87,
+  "score_meaning": "probability_fake_or_ai_generated"
+}
+```
+
+### `POST /explain`
+
+Accepts a multipart image upload with the field name `media` and an optional `veil_score` field.
+
+Expected response:
+
+```json
+{
+  "explanation": "- Possible warning sign...",
+  "note": "Visual explanations are AI-generated and should be treated as possible warning signs, not proof."
+}
+```
+
+## Detector Trainer
+
+The optional `detector-trainer/` workspace supports the local model pipeline:
+
+- splitting training data into train/validation folders
+- fine-tuning a fake-vs-real image classifier
+- evaluating the saved checkpoint on a held-out test set
+- serving the trained detector through FastAPI
+- generating visual explanations with a local vision-language model
+
+The frontend can still be developed and built without committing this folder, as long as compatible API endpoints are available.
+
+## Security
+
+- Do not commit `.env` or real API credentials.
+- Rotate credentials if they were ever committed or shared.
+- Do not expose the local detector API directly to the public internet without authentication.
+- Use a private tunnel or VPN-style tool for remote demos.
+- Treat Veil output as decision support, not definitive proof.
+
+## Technology
 
 - React 18
 - Vite 5
-- Plain CSS
+- CSS Grid/Flexbox
 - Local REST API integration
+- Optional Sightengine integration
+- Optional local vision-language explanation model
