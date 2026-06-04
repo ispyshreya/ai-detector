@@ -40,27 +40,16 @@ VITE_EXPLANATION_API_URL="http://127.0.0.1:8000/explain"
 VITE_CUSTOM_API_KEY=""
 ```
 
-## Run The Frontend
+## Run the Frontend
 
-Install dependencies:
+Install dependencies and start the Vite development server:
 
 ```powershell
 npm install
-```
-
-Start Vite:
-
-```powershell
 npm run dev
 ```
 
-Open:
-
-```text
-http://127.0.0.1:5173/
-```
-
-If PowerShell blocks `npm`, use `npm.cmd` or the local Node path.
+The app is served at `http://127.0.0.1:5173/` by default.
 
 ## Local Detector API
 
