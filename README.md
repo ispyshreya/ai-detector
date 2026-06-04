@@ -1,126 +1,123 @@
-# Veil – AI Media Authenticity Detector
+# Veil - AI Image Authenticity Checker
 
-A React-based web app that scans uploaded images against multiple AI detection APIs to identify synthetic generation and manipulation signals.
+Veil helps users check whether an image may be AI-generated, edited, or risky to trust. It presents one plain-language Veil score, a confidence rating, scam-aware next steps, and optional visual warning-sign explanations.
 
 ## Features
 
-- **Multi-provider support**: Seamlessly switch between Sightengine, custom REST APIs, and more.
-- **Real-time image analysis**: Upload JPG, JPEG, PNG, or WEBP files for instant scanning.
-- **Normalized scoring**: Results from different providers are normalized to a consistent 0–1 scale.
-- **Risk assessment**: Automatic classification as Low, Medium, or High risk based on AI-generation and deepfake scores.
-- **History tracking**: View all scans with timestamps, provider info, and confidence scores.
-- **Modern UI**: Dark-themed dashboard with responsive design and real-time feedback.
+- Image upload for JPG, JPEG, PNG, and WEBP files.
+- Single user-facing Veil authenticity score.
+- Confidence score based on detector agreement and signal strength.
+- Plain-language verdicts: `Looks authentic`, `Needs review`, and `High scam risk`.
+- Scam-focused guidance for images used in messages, profiles, posts, or urgent requests.
+- History page for recent scans.
+- Settings page for local endpoint configuration.
+- Optional local visual explanation endpoint for image-specific warning signs.
 
-## Getting Started
+## Architecture
 
-### Prerequisites
+The React frontend calls two local API routes:
 
-- Node.js 16+ and npm
-- API credentials for at least one detection provider (e.g., Sightengine)
+- `POST /predict` returns the local detector score.
+- `POST /explain` returns optional visual explanation text.
 
-### Installation
+The app can also call Sightengine from the browser when credentials are configured. Veil combines the detector outputs into one score for the user.
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/ai-detector.git
-   cd ai-detector
-   ```
+## Environment Variables
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+Copy `.env.example` to `.env`:
 
-3. Set up environment variables:
-   ```bash
-   cp .env.example .env
-   ```
-   Update `.env` with your API credentials:
-   ```
-   VITE_SIGHTENGINE_API_USER=your_user_id
-   VITE_SIGHTENGINE_API_SECRET=your_api_secret
-   ```
+```powershell
+copy .env.example .env
+```
 
-### Running Locally
+Configure:
 
-Start the development server:
-```bash
+```env
+VITE_SIGHTENGINE_API_USER="your_sightengine_user"
+VITE_SIGHTENGINE_API_SECRET="your_sightengine_secret"
+VITE_CUSTOM_API_URL="http://127.0.0.1:8000/predict"
+VITE_EXPLANATION_API_URL="http://127.0.0.1:8000/explain"
+VITE_CUSTOM_API_KEY=""
+```
+
+## Run The Frontend
+
+Install dependencies:
+
+```powershell
+npm install
+```
+
+Start Vite:
+
+```powershell
 npm run dev
 ```
 
-Open your browser and navigate to `http://localhost:5173`.
+Open:
 
-### Building for Production
-
-```bash
-npm run build
-npm run preview
+```text
+http://127.0.0.1:5173/
 ```
 
-## Project Structure
+If PowerShell blocks `npm`, use `npm.cmd` or the local Node path.
 
+## Local Detector API
+
+This repo expects a local model API running on port `8000`. The trainer/API code and model files can be kept local and are not required for the frontend repository to build.
+
+Expected endpoints:
+
+```text
+GET  /health
+POST /predict
+POST /explain
 ```
-.
-├── app.jsx              # Main React component with multi-provider logic
-├── main.jsx             # React entry point
-├── index.html           # HTML template
-├── styles.css           # Global and component styles
-├── vite.config.js       # Vite configuration
-├── package.json         # Dependencies and scripts
-├── .env.example         # Example environment variables
-└── README.md            # This file
-```
 
-## Supported Providers
+`/predict` should return a JSON response with a `genai` score from `0` to `1`.
 
-### Sightengine
-- **Models**: genai, deepfake
-- **Env Keys**: `VITE_SIGHTENGINE_API_USER`, `VITE_SIGHTENGINE_API_SECRET`
-- **Endpoint**: https://api.sightengine.com/1.0/check.json
+`/explain` should return:
 
-### Custom REST API
-- **Env Keys**: `VITE_CUSTOM_API_URL`, `VITE_CUSTOM_API_KEY`
-- **Description**: Route requests to any custom detection endpoint that returns normalized fields.
-
-## Adding a New Provider
-
-Edit `app.jsx` and add an entry to the `providers` object:
-
-```javascript
-myProvider: {
-  label: "My Provider",
-  description: "Your provider description.",
-  envKeys: ["VITE_MY_API_URL", "VITE_MY_API_KEY"],
-  buildRequest: (file) => ({
-    url: ENV.VITE_MY_API_URL,
-    options: { /* ... */ }
-  }),
-  normalizeResponse: (json) => ({
-    raw: json,
-    genai: extractScore(json, "genai"),
-    deepfake: extractScore(json, "deepfake"),
-  }),
-  help: "Instructions for this provider.",
+```json
+{
+  "explanation": "Short visual warning-sign explanation",
+  "note": "Visual explanations are AI-generated and should be treated as possible warning signs, not proof."
 }
 ```
 
-## Technology Stack
+## Detector Trainer
 
-- **Frontend**: React 18, Vite 5
-- **Styling**: CSS3 with CSS Grid and Flexbox
-- **State Management**: React Hooks (useState, useMemo)
-- **Build Tool**: Vite with React plugin
+The companion `detector-trainer/` workspace is used locally to:
+
+- split image data into train/validation folders
+- train the fake-vs-real ResNet detector
+- evaluate the saved checkpoint on a held-out test set
+- run the FastAPI model server that exposes `/predict` and `/explain`
+
+The frontend can still build without this folder as long as compatible API endpoints are running.
+
+## Build
+
+```powershell
+npm run build
+```
+
+Preview the production build:
+
+```powershell
+npm run preview
+```
 
 ## Security Notes
 
-- API credentials are stored in `.env` and never committed to version control (see `.gitignore`).
-- All API calls are made from the browser; no backend proxy is used.
-- Raw API responses are logged but not stored persistently.
+- Do not commit `.env`.
+- Rotate any credentials that were accidentally committed.
+- Do not expose the local API directly to the public internet without authentication or a private tunnel.
+- Visual explanations are assistive, not proof. Veil should support human review rather than replace it.
 
-## License
+## Tech Stack
 
-MIT
-
-## Support
-
-For issues or feature requests, please open an issue on GitHub.
+- React 18
+- Vite 5
+- Plain CSS
+- Local REST API integration
