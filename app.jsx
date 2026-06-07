@@ -78,9 +78,24 @@ const verdictLabel = (score) => {
   return score >= 0.7 ? "High scam risk" : score >= 0.4 ? "Needs review" : "Looks authentic";
 };
 
+const scoreCaption = (score) => {
+  if (score === null || score === undefined) return "inconclusive";
+  if (score >= 0.7) return "likely false";
+  if (score >= 0.4) return "needs review";
+  return "likely authentic";
+};
+
 const formatPercent = (score) => {
   if (score === null || score === undefined) return "N/A";
   return `${(score * 100).toFixed(1)}%`;
+};
+
+const formatBullets = (text) => {
+  if (!text) return [];
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^[-*•]\s*/, "").replace(/^\d+\.\s*/, "").trim())
+    .filter(Boolean);
 };
 
 const extractScore = (response, name) => {
@@ -275,6 +290,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [history, setHistory] = useState([]);
+  const [settingsTab, setSettingsTab] = useState("overview");
+  const [themeMode, setThemeMode] = useState("midnight");
+  const [motionMode, setMotionMode] = useState("on");
 
   const localScore = scan?.local?.genai ?? null;
   const sightengineScore = scan?.sightengine?.genai ?? null;
@@ -282,6 +300,10 @@ function App() {
   const overallScore = scan?.comparison?.overallScore ?? null;
   const confidenceScore = scan?.comparison?.confidence ?? null;
   const resultRisk = useMemo(() => riskLabel(overallScore), [overallScore]);
+  const visualBullets = useMemo(
+    () => formatBullets(visualExplanation?.explanation),
+    [visualExplanation]
+  );
 
   const missingEnv = Object.entries(detectors).flatMap(([id, detector]) =>
     detector.envKeys
@@ -293,8 +315,7 @@ function App() {
     setActivePage(sectionId);
   };
 
-  const handleFileChange = (event) => {
-    const selected = event.target.files?.[0] ?? null;
+  const selectOneFile = (selected) => {
     setFile(selected);
     setScan(null);
     setVisualExplanation(null);
@@ -307,6 +328,18 @@ function App() {
     } else {
       setPreview(null);
     }
+  };
+
+  const handleFileChange = (event) => {
+    const selected = event.target.files?.[0] ?? null;
+    selectOneFile(selected);
+    event.target.value = "";
+  };
+
+  const handleFileDrop = (event) => {
+    event.preventDefault();
+    const selected = event.dataTransfer.files?.[0] ?? null;
+    selectOneFile(selected);
   };
 
   const handleScan = async () => {
@@ -372,8 +405,8 @@ function App() {
   };
 
   return (
-    <div className="veil-app">
-      <aside className="sidebar">
+    <div className={`veil-app theme-${themeMode} motion-${motionMode}`}>
+      <header className="topbar">
         <div className="brand-block">
           <div className="brand-icon">V</div>
           <div>
@@ -382,7 +415,7 @@ function App() {
           </div>
         </div>
 
-        <div className="nav-group">
+        <nav className="nav-group" aria-label="Main navigation">
           {navItems.map((item) => (
             <button
               className={`nav-link ${activePage === item.id ? "active" : ""}`}
@@ -392,17 +425,19 @@ function App() {
               {item.label}
             </button>
           ))}
-        </div>
+        </nav>
 
-        <div className="sidebar-card">
-          <p className="eyebrow">Detector stack</p>
-          <strong>Local ResNet + Sightengine</strong>
-          <p>Veil combines multiple checks into one simple authenticity score.</p>
+        <div className="topbar-status">
+          <span className={`status-dot ${loading ? "busy" : ""}`}></span>
+          <div>
+            <strong>{loading ? "Scanning" : "Ready"}</strong>
+            <span>Local analysis enabled</span>
+          </div>
         </div>
-      </aside>
+      </header>
 
       <main className="content">
-        {activePage === "dashboard" && (
+        {activePage === "dashboard" && !scan && (
         <section className="hero-panel">
           <div>
             <p className="eyebrow">AI media risk dashboard</p>
@@ -423,40 +458,87 @@ function App() {
         </section>
         )}
 
+        {activePage === "dashboard" && !scan && (
+          <section className="dashboard-grid">
+            <div className="dashboard-card dashboard-card-primary">
+              <p className="eyebrow">Ready to scan</p>
+              <h2>Check an image before you trust it.</h2>
+              <p>
+                Veil reviews AI-generation risk, manipulation signals, and visible warning signs, then turns them into one clear authenticity score.
+              </p>
+              <button className="primary-button" onClick={() => navigate("upload")}>
+                Start Image Check
+              </button>
+            </div>
+
+            <div className="dashboard-card">
+              <p className="eyebrow">Score</p>
+              <strong>0-100%</strong>
+              <span>Higher scores mean stronger AI or manipulation risk.</span>
+            </div>
+
+            <div className="dashboard-card">
+              <p className="eyebrow">Guidance</p>
+              <strong>Scam-aware</strong>
+              <span>Results focus on identity, money, urgency, and trust decisions.</span>
+            </div>
+
+            <div className="dashboard-card">
+              <p className="eyebrow">Explanation</p>
+              <strong>Visual review</strong>
+              <span>Veil can inspect visible warning signs after the score is ready.</span>
+            </div>
+
+            <div className="workflow-card">
+              <div>
+                <span>01</span>
+                <strong>Upload</strong>
+                <p>Add a suspicious image, profile photo, listing, screenshot, or post.</p>
+              </div>
+              <div>
+                <span>02</span>
+                <strong>Score</strong>
+                <p>Veil combines model signals into a single authenticity risk score.</p>
+              </div>
+              <div>
+                <span>03</span>
+                <strong>Verify</strong>
+                <p>Use the warning signs and next steps before taking action.</p>
+              </div>
+            </div>
+          </section>
+        )}
+
         {activePage === "upload" && (
         <section className="panel upload-panel">
-          <div className="panel-heading">
-            <div>
+          <div className="upload-workspace">
+            <div className="upload-copy">
               <p className="eyebrow">Upload center</p>
-              <h2>Check an image</h2>
-              <p className="panel-copy">Upload a JPG, PNG, or WEBP image before trusting a post, profile, message, or request.</p>
+              <h2>Check one image</h2>
+              <p className="panel-copy">Add a single JPG, PNG, or WEBP image. Choosing another file replaces the current one.</p>
+              <button className="primary-button" onClick={handleScan} disabled={loading || !file}>
+                {loading ? "Checking..." : "Check Authenticity"}
+              </button>
             </div>
-          </div>
 
-          <div className="upload-grid">
-            <label className="upload-box">
+            <label className={`upload-box ${preview ? "has-preview" : ""}`} onDrop={handleFileDrop} onDragOver={(event) => event.preventDefault()}>
               <input type="file" accept=".jpg,.jpeg,.png,.webp" onChange={handleFileChange} />
-              <div>
-                <strong>Select an image</strong>
-                <p>Drag & drop or click to browse</p>
-              </div>
-            </label>
-            {preview && (
-              <div className="preview-card">
-                <img src={preview} alt="Preview" />
-                <div>
-                  <div className="eyebrow">Selected file</div>
-                  <h3>{file.name}</h3>
-                  <p>{(file.size / 1024).toFixed(1)} KB</p>
+              {preview ? (
+                <div className="inline-preview">
+                  <img src={preview} alt="Preview" />
+                  <div>
+                    <span className="eyebrow">Selected image</span>
+                    <strong>{file.name}</strong>
+                    <p>{(file.size / 1024).toFixed(1)} KB</p>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-
-          <div className="action-bar">
-            <button className="primary-button" onClick={handleScan} disabled={loading}>
-              {loading ? "Checking..." : "Check Authenticity"}
-            </button>
+              ) : (
+                <div>
+                  <strong>Select an image</strong>
+                  <p>Drop one file here or click to browse</p>
+                </div>
+              )}
+            </label>
           </div>
 
           {missingEnv.length > 0 && (
@@ -470,95 +552,93 @@ function App() {
 
         {activePage === "dashboard" && scan && (
           <section className="panel result-panel">
-            <div className="analysis-header">
-              <div>
-                <p className="eyebrow">Combined analysis</p>
+            <div className="result-report">
+              <div className="result-lead">
+                <p className="eyebrow">Authenticity report</p>
                 <h2>
-                  Overall rating: <span className={`risk-${resultRisk.type}`}>{resultRisk.text}</span>
+                  {resultRisk.text}
                 </h2>
-                <p className="panel-copy">
-                  Veil score: <strong>{formatPercent(overallScore)}</strong>. Confidence:{" "}
-                  <strong>{formatPercent(confidenceScore)}</strong>.
-                </p>
-              </div>
-              <div className={`risk-orb ${resultRisk.type}`}>
-                {formatPercent(confidenceScore)}
-              </div>
-            </div>
-
-            <div className="metric-grid">
-              <div className="metric-card">
-                <div className="metric-title">
-                  <span>Veil Score</span>
-                  <span className={`pill ${resultRisk.type}`}>{resultRisk.text}</span>
-                </div>
-                <div className="metric-value">{formatPercent(overallScore)}</div>
-                <div className="meter">
-                  <div className="meter-fill" style={{ width: overallScore != null ? `${overallScore * 100}%` : "0%" }}></div>
-                </div>
-                <p className="metric-copy">How strongly Veil thinks the image may be AI-generated or manipulated.</p>
-              </div>
-
-              <div className="metric-card">
-                <div className="metric-title">
+                <div className="confidence-readout">
                   <span>Confidence</span>
-                  <span className={`pill ${riskLabel(confidenceScore).type}`}>{riskLabel(confidenceScore).text}</span>
+                  <strong>{formatPercent(confidenceScore)}</strong>
                 </div>
-                <div className="metric-value">{formatPercent(confidenceScore)}</div>
-                <div className="meter">
-                  <div className="meter-fill" style={{ width: confidenceScore != null ? `${confidenceScore * 100}%` : "0%" }}></div>
+                <div className={`risk-orb ${resultRisk.type}`}>
+                  <strong>{formatPercent(overallScore)}</strong>
+                  <span>{scoreCaption(overallScore)}</span>
                 </div>
-                <p className="metric-copy">How much weight Veil gives this result based on signal strength and agreement.</p>
+                <button className="secondary-button" onClick={() => navigate("upload")}>
+                  Check Another Image
+                </button>
+              </div>
+
+              <div className="image-review-card">
+                <p className="eyebrow">Image reviewed</p>
+                {preview && <img src={preview} alt="Analyzed upload" />}
+                {file && (
+                  <div>
+                    <strong>{file.name}</strong>
+                    <span>{(file.size / 1024).toFixed(1)} KB</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="explanation-card primary-explanation">
+                <p className="eyebrow">Why Veil rated this</p>
+                {explaining ? (
+                  <p className="panel-copy">Veil is inspecting the image for visible warning signs...</p>
+                ) : visualBullets.length ? (
+                  <ul>
+                    {visualBullets.map((line, index) => (
+                      <li key={`${line}-${index}`}>{line}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="panel-copy">Visual explanation was not generated for this scan.</p>
+                )}
+                {visualExplanation?.note && (
+                  <p className={`technical-note ${visualExplanation.used_fallback ? "fallback" : ""}`}>
+                    {visualExplanation.note}
+                  </p>
+                )}
+                {visualExplanation?.error && <p className="technical-note">Error: {visualExplanation.error}</p>}
               </div>
             </div>
 
-            <div className="explanation-card">
-              <p className="eyebrow">Why Veil flagged this</p>
-              {explaining ? (
-                <p className="panel-copy">Veil is inspecting the image for visible warning signs...</p>
-              ) : visualExplanation?.explanation ? (
-                <div className="visual-explanation-text">{visualExplanation.explanation}</div>
-              ) : (
-                <p className="panel-copy">Visual explanation was not generated for this scan.</p>
-              )}
-              {visualExplanation?.note && (
-                <p className={`technical-note ${visualExplanation.used_fallback ? "fallback" : ""}`}>
-                  {visualExplanation.note}
-                </p>
-              )}
-              {visualExplanation?.error && <p className="technical-note">Error: {visualExplanation.error}</p>}
-            </div>
-
-            <div className="explanation-card">
-              <p className="eyebrow">What this means</p>
-              <ul>
-                {scan.comparison.userSummary.map((line, index) => (
-                  <li key={`${line}-${index}`}>{line}</li>
+            <div className="guidance-grid">
+              <div className="guidance-card">
+                <p className="eyebrow">Meaning</p>
+                {scan.comparison.userSummary.slice(0, 2).map((line, index) => (
+                  <p key={`${line}-${index}`}>{line}</p>
                 ))}
-              </ul>
-            </div>
+              </div>
 
-            <div className="explanation-card">
-              <p className="eyebrow">What to check</p>
-              <ul>
-                {scan.comparison.visualChecks.map((line, index) => (
-                  <li key={`${line}-${index}`}>{line}</li>
+              <div className="guidance-card">
+                <p className="eyebrow">Check</p>
+                {scan.comparison.visualChecks.slice(0, 2).map((line, index) => (
+                  <p key={`${line}-${index}`}>{line}</p>
                 ))}
-              </ul>
-            </div>
+              </div>
 
-            <div className="explanation-card">
-              <p className="eyebrow">Recommended next steps</p>
-              <ul>
-                {scan.comparison.nextSteps.map((line, index) => (
-                  <li key={`${line}-${index}`}>{line}</li>
+              <div className="guidance-card">
+                <p className="eyebrow">Next</p>
+                {scan.comparison.nextSteps.slice(0, 2).map((line, index) => (
+                  <p key={`${line}-${index}`}>{line}</p>
                 ))}
-              </ul>
+              </div>
             </div>
 
             <details className="technical-details">
-              <summary>Technical details</summary>
+              <summary>Show more detail</summary>
               <ul>
+                {scan.comparison.userSummary.slice(2).map((line, index) => (
+                  <li key={`${line}-${index}`}>{line}</li>
+                ))}
+                {scan.comparison.visualChecks.slice(2).map((line, index) => (
+                  <li key={`${line}-${index}`}>{line}</li>
+                ))}
+                {scan.comparison.nextSteps.slice(2).map((line, index) => (
+                  <li key={`${line}-${index}`}>{line}</li>
+                ))}
                 {scan.comparison.explanation.map((line, index) => (
                   <li key={`${line}-${index}`}>{line}</li>
                 ))}
@@ -600,23 +680,145 @@ function App() {
         {activePage === "settings" && (
         <section className="panel settings-panel">
           <p className="eyebrow">Settings</p>
-          <h2>Platform configuration</h2>
-          <div className="settings-grid">
-            <div>
-              <strong>Local API</strong>
-              <p>{ENV.VITE_CUSTOM_API_URL || "Not configured"}</p>
-            </div>
-            <div>
-              <strong>Sightengine</strong>
-              <p>{ENV.VITE_SIGHTENGINE_API_USER ? "Credentials configured" : "Credentials missing"}</p>
-            </div>
-            <div>
-              <strong>Decision threshold</strong>
-              <p>Scores at or above 50% are treated as likely AI-generated.</p>
-            </div>
-            <div>
-              <strong>Visual explanation</strong>
-              <p>{ENV.VITE_EXPLANATION_API_URL || "Not configured"}</p>
+          <h2>Platform settings</h2>
+          <p className="panel-copy">Review detector connectivity, scoring behavior, and interface preferences for this local Veil session.</p>
+
+          <div className="settings-layout">
+            <aside className="settings-menu">
+              <button className={`settings-menu-item ${settingsTab === "overview" ? "active" : ""}`} onClick={() => setSettingsTab("overview")}>Overview</button>
+              <button className={`settings-menu-item ${settingsTab === "api" ? "active" : ""}`} onClick={() => setSettingsTab("api")}>API Connections</button>
+              <button className={`settings-menu-item ${settingsTab === "detection" ? "active" : ""}`} onClick={() => setSettingsTab("detection")}>Detection</button>
+              <button className={`settings-menu-item ${settingsTab === "display" ? "active" : ""}`} onClick={() => setSettingsTab("display")}>Display</button>
+            </aside>
+
+            <div className="settings-sections">
+              {settingsTab === "overview" && (
+              <section className="settings-section">
+                <div className="settings-section-heading">
+                  <div>
+                    <p className="eyebrow">Overview</p>
+                    <h3>System status</h3>
+                  </div>
+                  <span className="status-pill connected">Ready</span>
+                </div>
+                <div className="settings-list">
+                  <div className="settings-row">
+                    <div>
+                      <strong>Veil mode</strong>
+                      <p>Local analysis with optional external detector comparison.</p>
+                    </div>
+                    <span>Active</span>
+                  </div>
+                  <div className="settings-row">
+                    <div>
+                      <strong>Session history</strong>
+                      <p>Recent scans are stored in memory for the current browser session.</p>
+                    </div>
+                    <span>{history.length} scans</span>
+                  </div>
+                </div>
+              </section>
+              )}
+
+              {settingsTab === "api" && (
+              <section className="settings-section">
+                <div className="settings-section-heading">
+                  <div>
+                    <p className="eyebrow">API Connections</p>
+                    <h3>Detector endpoints</h3>
+                  </div>
+                </div>
+                <div className="settings-list">
+                  <div className="settings-row">
+                    <div>
+                      <strong>Local detector API</strong>
+                      <p>{ENV.VITE_CUSTOM_API_URL || "Not configured"}</p>
+                    </div>
+                    <span className={ENV.VITE_CUSTOM_API_URL ? "status-pill connected" : "status-pill warning"}>
+                      {ENV.VITE_CUSTOM_API_URL ? "Connected" : "Missing"}
+                    </span>
+                  </div>
+                  <div className="settings-row">
+                    <div>
+                      <strong>Visual explanation API</strong>
+                      <p>{ENV.VITE_EXPLANATION_API_URL || "Not configured"}</p>
+                    </div>
+                    <span className={ENV.VITE_EXPLANATION_API_URL ? "status-pill connected" : "status-pill warning"}>
+                      {ENV.VITE_EXPLANATION_API_URL ? "Connected" : "Optional"}
+                    </span>
+                  </div>
+                  <div className="settings-row">
+                    <div>
+                      <strong>Sightengine</strong>
+                      <p>External AI-generation and manipulation signal.</p>
+                    </div>
+                    <span className={ENV.VITE_SIGHTENGINE_API_USER ? "status-pill connected" : "status-pill warning"}>
+                      {ENV.VITE_SIGHTENGINE_API_USER ? "Configured" : "Missing"}
+                    </span>
+                  </div>
+                </div>
+              </section>
+              )}
+
+              {settingsTab === "detection" && (
+              <section className="settings-section">
+                <div className="settings-section-heading">
+                  <div>
+                    <p className="eyebrow">Detection</p>
+                    <h3>Scoring behavior</h3>
+                  </div>
+                </div>
+                <div className="settings-list">
+                  <div className="settings-row">
+                    <div>
+                      <strong>Decision threshold</strong>
+                      <p>Scores at or above 50% are treated as likely AI-generated or manipulated.</p>
+                    </div>
+                    <span>50%</span>
+                  </div>
+                  <div className="settings-row">
+                    <div>
+                      <strong>Risk bands</strong>
+                      <p>Low risk below 40%, review between 40-70%, high risk at 70% and above.</p>
+                    </div>
+                    <span>3 levels</span>
+                  </div>
+                </div>
+              </section>
+              )}
+
+              {settingsTab === "display" && (
+              <section className="settings-section">
+                <div className="settings-section-heading">
+                  <div>
+                    <p className="eyebrow">Display</p>
+                    <h3>Interface preferences</h3>
+                  </div>
+                </div>
+                <div className="settings-list">
+                  <div className="settings-row">
+                    <div>
+                      <strong>Theme</strong>
+                      <p>Choose the visual style used across the dashboard.</p>
+                    </div>
+                    <div className="segmented-control" aria-label="Theme mode">
+                      <button className={themeMode === "midnight" ? "active" : ""} onClick={() => setThemeMode("midnight")}>Midnight</button>
+                      <button className={themeMode === "ice" ? "active" : ""} onClick={() => setThemeMode("ice")}>Ice</button>
+                    </div>
+                  </div>
+                  <div className="settings-row">
+                    <div>
+                      <strong>Motion</strong>
+                      <p>Enable or reduce visual pulse, meter, and entrance animations.</p>
+                    </div>
+                    <div className="segmented-control" aria-label="Motion mode">
+                      <button className={motionMode === "on" ? "active" : ""} onClick={() => setMotionMode("on")}>On</button>
+                      <button className={motionMode === "reduced" ? "active" : ""} onClick={() => setMotionMode("reduced")}>Reduced</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              )}
             </div>
           </div>
         </section>
