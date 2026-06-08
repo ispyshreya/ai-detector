@@ -1,9 +1,26 @@
+# Secrets and local environment
 .env
+.env.*
+!.env.example
+*.local
+*.secret
+*.secrets
+*credentials*
+*apikey*
+*api-key*
+*.pem
+*.key
+
+# Dependencies and build output
 node_modules/
 dist/
 .venv/
 detector-trainer/.venv/
+
+# Python/cache/log output
 __pycache__/
 *.pyc
 *.log
+
+# Local model artifacts
 detector-trainer/output/final_model.pt
