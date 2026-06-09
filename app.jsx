@@ -1,58 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const ENV = import.meta.env;
 
-const detectors = {
-  local: {
-    label: "Local ResNet",
-    description: "Your trained fake-vs-real ResNet-50 checkpoint.",
-    envKeys: ["VITE_CUSTOM_API_URL"],
-    buildRequest: (file) => {
-      const formData = new FormData();
-      formData.append("media", file, file.name);
-      return {
-        url: ENV.VITE_CUSTOM_API_URL,
-        options: {
-          method: "POST",
-          headers: ENV.VITE_CUSTOM_API_KEY
-            ? { Authorization: `Bearer ${ENV.VITE_CUSTOM_API_KEY}` }
-            : {},
-          body: formData,
-        },
-      };
-    },
-    normalizeResponse: (json) => ({
-      raw: json,
-      genai: extractScore(json, "genai"),
-      deepfake: extractScore(json, "deepfake"),
-      label: json?.label ?? null,
-      confidence: extractScore(json, "confidence"),
-    }),
-  },
-  sightengine: {
-    label: "Sightengine",
-    description: "External genai and deepfake detector API.",
-    envKeys: ["VITE_SIGHTENGINE_API_USER", "VITE_SIGHTENGINE_API_SECRET"],
-    buildRequest: (file) => {
-      const formData = new FormData();
-      formData.append("api_user", ENV.VITE_SIGHTENGINE_API_USER);
-      formData.append("api_secret", ENV.VITE_SIGHTENGINE_API_SECRET);
-      formData.append("models", "genai,deepfake");
-      formData.append("media", file, file.name);
-      return {
-        url: "https://api.sightengine.com/1.0/check.json",
-        options: { method: "POST", body: formData },
-      };
-    },
-    normalizeResponse: (json) => ({
-      raw: json,
-      genai: extractScore(json, "genai"),
-      deepfake: extractScore(json, "deepfake"),
-      label: null,
-      confidence: null,
-    }),
-  },
-};
+// All detector calls now go through the Veil backend (POST /scan). The backend
+// holds every API key server-side, so no secrets ship to the browser. Point the
+// frontend at the backend with VITE_VEIL_API_URL (defaults to local dev).
+const API_BASE = (ENV.VITE_VEIL_API_URL || "http://127.0.0.1:8000").replace(/\/+$/, "");
 
 const navItems = [
   { id: "dashboard", label: "Dashboard" },
@@ -98,81 +51,55 @@ const formatBullets = (text) => {
     .filter(Boolean);
 };
 
-const extractScore = (response, name) => {
-  if (!response) return null;
-
-  const scoreCandidates = [response[name], response?.type, response?.scores, response?.results];
-  for (const maybe of scoreCandidates) {
-    if (maybe == null) continue;
-
-    if (typeof maybe === "number") return clampScore(maybe);
-    if (typeof maybe === "string") {
-      const parsed = parseFloat(maybe);
-      if (Number.isFinite(parsed)) return clampScore(parsed);
-    }
-    if (typeof maybe === "object") {
-      const keys = [
-        "ai_generated",
-        "ai-generated",
-        "genai",
-        "deepfake",
-        "face_manipulation",
-        "manipulated",
-        "score",
-        "probability",
-        "confidence",
-        "value",
-      ];
-      for (const key of keys) {
-        if (maybe[key] != null) {
-          const parsed = parseFloat(maybe[key]);
-          if (Number.isFinite(parsed)) return clampScore(parsed);
-        }
-      }
-    }
-  }
-
-  return null;
-};
-
-const runDetector = async (id, file) => {
-  const detector = detectors[id];
-  const missing = detector.envKeys.filter((key) => !ENV[key]);
-  if (missing.length > 0) {
-    throw new Error(`Missing ${detector.label} settings: ${missing.join(", ")}`);
-  }
-
-  const { url, options } = detector.buildRequest(file);
-  const result = await fetch(url, options);
-  const json = await result.json();
-
-  if (!result.ok) {
-    throw new Error(json.error ? JSON.stringify(json.error) : `${detector.label} returned HTTP ${result.status}`);
-  }
-
-  return detector.normalizeResponse(json);
-};
-
-const runVisualExplanation = async (file, veilScore) => {
-  if (!ENV.VITE_EXPLANATION_API_URL) return null;
-
+// POST the image to the Veil backend and return the raw ScanResponse envelope.
+const runScan = async (file) => {
   const formData = new FormData();
   formData.append("media", file, file.name);
-  if (veilScore != null) {
-    formData.append("veil_score", veilScore.toString());
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE}/scan`, { method: "POST", body: formData });
+  } catch (networkError) {
+    throw new Error(
+      `Could not reach the Veil backend at ${API_BASE}. Is it running? (${networkError.message})`
+    );
   }
 
-  const result = await fetch(ENV.VITE_EXPLANATION_API_URL, {
-    method: "POST",
-    body: formData,
-  });
-  const json = await result.json();
-
-  if (!result.ok) {
-    throw new Error(json.detail || `Visual explanation returned HTTP ${result.status}`);
+  let envelope;
+  try {
+    envelope = await response.json();
+  } catch {
+    throw new Error(`Veil backend returned a non-JSON response (HTTP ${response.status}).`);
   }
 
-  return json;
+  if (!response.ok) {
+    throw new Error(envelope?.detail || `Veil backend returned HTTP ${response.status}.`);
+  }
+
+  return envelope;
+};
+
+// Translate the backend's signal envelope into the per-detector shape the UI
+// already understands. Sightengine's ai_score -> genai, manipulation -> deepfake.
+const mapEnvelope = (envelope) => {
+  const signals = envelope?.signals ?? [];
+  const find = (name) => signals.find((signal) => signal.name === name) ?? null;
+
+  const toDetector = (signal) =>
+    signal
+      ? {
+          genai: signal.ai_score,
+          deepfake: signal.manipulation_score,
+          status: signal.status,
+          error: signal.error,
+          raw: signal.raw,
+        }
+      : null;
+
+  return {
+    local: toDetector(find("local")),
+    sightengine: toDetector(find("sightengine")),
+  };
 };
 
 const buildComparison = (local, sightengine) => {
@@ -293,6 +220,7 @@ function App() {
   const [settingsTab, setSettingsTab] = useState("overview");
   const [themeMode, setThemeMode] = useState("midnight");
   const [motionMode, setMotionMode] = useState("on");
+  const [backendStatus, setBackendStatus] = useState(null);
 
   const localScore = scan?.local?.genai ?? null;
   const sightengineScore = scan?.sightengine?.genai ?? null;
@@ -305,11 +233,22 @@ function App() {
     [visualExplanation]
   );
 
-  const missingEnv = Object.entries(detectors).flatMap(([id, detector]) =>
-    detector.envKeys
-      .filter((key) => !ENV[key])
-      .map((key) => `${detector.label}: ${key}`)
-  );
+  // Probe the backend on load so a tester can see which signals are configured
+  // (e.g. whether Sightengine keys are present server-side) without scanning.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/health`)
+      .then((response) => response.json())
+      .then((data) => {
+        if (!cancelled) setBackendStatus(data);
+      })
+      .catch((healthError) => {
+        if (!cancelled) setBackendStatus({ error: healthError.message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const navigate = (sectionId) => {
     setActivePage(sectionId);
@@ -352,24 +291,20 @@ function App() {
       return;
     }
 
-    if (missingEnv.length > 0) {
-      setError(`Missing detector settings: ${missingEnv.join("; ")}`);
-      return;
-    }
-
     setLoading(true);
 
     try {
-      const [localResult, sightengineResult] = await Promise.all([
-        runDetector("local", file),
-        runDetector("sightengine", file),
-      ]);
-      const comparison = buildComparison(localResult, sightengineResult);
-      const nextScan = {
-        local: localResult,
-        sightengine: sightengineResult,
-        comparison,
-      };
+      const envelope = await runScan(file);
+      const { local, sightengine } = mapEnvelope(envelope);
+
+      // Surface a backend-side signal failure (e.g. Sightengine rejected the
+      // key) instead of silently scoring it as missing.
+      if (sightengine?.status === "error") {
+        setError(`Sightengine error from backend: ${sightengine.error}`);
+      }
+
+      const comparison = buildComparison(local, sightengine);
+      const nextScan = { local, sightengine, comparison, envelope };
 
       setScan(nextScan);
       setHistory((current) => [
@@ -384,18 +319,10 @@ function App() {
       ]);
       setActivePage("dashboard");
 
-      setExplaining(true);
-      try {
-        const explanation = await runVisualExplanation(file, comparison.overallScore);
-        setVisualExplanation(explanation);
-      } catch (explanationError) {
-        setVisualExplanation({
-          explanation:
-            "Veil could not generate a visual explanation on this run. Use the checklist below and try again if needed.",
-          error: explanationError.message,
-        });
-      } finally {
-        setExplaining(false);
+      // Layer 3 (LLM) explanation arrives on the envelope once the backend
+      // builds it. Until then the guidance below is generated client-side.
+      if (envelope.explanation) {
+        setVisualExplanation({ explanation: envelope.explanation });
       }
     } catch (err) {
       setError(err.message || "Scan failed.");
@@ -541,9 +468,9 @@ function App() {
             </label>
           </div>
 
-          {missingEnv.length > 0 && (
+          {backendStatus?.error && (
             <div className="alert-box">
-              Missing detector settings: {missingEnv.join("; ")}.
+              Cannot reach the Veil backend at {API_BASE}. Start it with `uvicorn app.main:app --reload` from the backend folder. ({backendStatus.error})
             </div>
           )}
           {error && <div className="alert-box">{error}</div>}
@@ -643,8 +570,15 @@ function App() {
                   <li key={`${line}-${index}`}>{line}</li>
                 ))}
                 <li>Internal score: {formatPercent(scan.comparison.rawScores.local)}</li>
-                <li>External score: {formatPercent(scan.comparison.rawScores.sightengine)}</li>
+                <li>External (Sightengine) score: {formatPercent(scan.comparison.rawScores.sightengine)}</li>
                 <li>Face manipulation score: {formatPercent(scan.comparison.rawScores.deepfake)}</li>
+                {scan.envelope?.signals?.map((signal) => (
+                  <li key={`sig-${signal.name}`}>
+                    {signal.name} [{signal.signal_class}] — {signal.status}
+                    {signal.ai_score != null ? ` · ai ${formatPercent(signal.ai_score)}` : ""}
+                    {signal.manipulation_score != null ? ` · manip ${formatPercent(signal.manipulation_score)}` : ""}
+                  </li>
+                ))}
               </ul>
             </details>
           </section>
@@ -725,36 +659,37 @@ function App() {
                 <div className="settings-section-heading">
                   <div>
                     <p className="eyebrow">API Connections</p>
-                    <h3>Detector endpoints</h3>
+                    <h3>Backend signals</h3>
                   </div>
+                  <span className={backendStatus && !backendStatus.error ? "status-pill connected" : "status-pill warning"}>
+                    {backendStatus ? (backendStatus.error ? "Unreachable" : "Connected") : "Checking..."}
+                  </span>
                 </div>
                 <div className="settings-list">
                   <div className="settings-row">
                     <div>
-                      <strong>Local detector API</strong>
-                      <p>{ENV.VITE_CUSTOM_API_URL || "Not configured"}</p>
+                      <strong>Veil backend</strong>
+                      <p>{API_BASE}</p>
                     </div>
-                    <span className={ENV.VITE_CUSTOM_API_URL ? "status-pill connected" : "status-pill warning"}>
-                      {ENV.VITE_CUSTOM_API_URL ? "Connected" : "Missing"}
-                    </span>
-                  </div>
-                  <div className="settings-row">
-                    <div>
-                      <strong>Visual explanation API</strong>
-                      <p>{ENV.VITE_EXPLANATION_API_URL || "Not configured"}</p>
-                    </div>
-                    <span className={ENV.VITE_EXPLANATION_API_URL ? "status-pill connected" : "status-pill warning"}>
-                      {ENV.VITE_EXPLANATION_API_URL ? "Connected" : "Optional"}
+                    <span className={backendStatus && !backendStatus.error ? "status-pill connected" : "status-pill warning"}>
+                      {backendStatus ? (backendStatus.error ? "Offline" : "Online") : "..."}
                     </span>
                   </div>
                   <div className="settings-row">
                     <div>
                       <strong>Sightengine</strong>
-                      <p>External AI-generation and manipulation signal.</p>
+                      <p>Configured server-side; keys never reach the browser.</p>
                     </div>
-                    <span className={ENV.VITE_SIGHTENGINE_API_USER ? "status-pill connected" : "status-pill warning"}>
-                      {ENV.VITE_SIGHTENGINE_API_USER ? "Configured" : "Missing"}
+                    <span className={backendStatus?.available_signals?.includes("sightengine") ? "status-pill connected" : "status-pill warning"}>
+                      {backendStatus?.available_signals?.includes("sightengine") ? "Available" : "Not configured"}
                     </span>
+                  </div>
+                  <div className="settings-row">
+                    <div>
+                      <strong>Active signals</strong>
+                      <p>Signals the backend reports ready for this session.</p>
+                    </div>
+                    <span>{backendStatus?.available_signals?.length ? backendStatus.available_signals.join(", ") : "None"}</span>
                   </div>
                 </div>
               </section>
