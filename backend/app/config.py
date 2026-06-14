@@ -46,7 +46,7 @@ class Settings(BaseSettings):
 
     # --- Behavior ---
     signal_timeout_seconds: float = 6.0  # per-signal cap; supports p95 < 6s goal
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
 
 @lru_cache
