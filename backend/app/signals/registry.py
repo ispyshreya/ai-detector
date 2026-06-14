@@ -14,6 +14,12 @@ def all_signals() -> list[Signal]:
 
     # Each block is independent; a failed import disables only that signal.
     try:
+        from app.signals.local_model import LocalModelSignal
+        signals.append(LocalModelSignal())
+    except Exception:  # noqa: BLE001 - never let one signal break the registry
+        pass
+
+    try:
         from app.signals.sightengine import SightengineSignal
         signals.append(SightengineSignal())
     except Exception:  # noqa: BLE001 - never let one signal break the registry

@@ -47,7 +47,7 @@ const formatBullets = (text) => {
   if (!text) return [];
   return text
     .split(/\r?\n/)
-    .map((line) => line.replace(/^[-*•]\s*/, "").replace(/^\d+\.\s*/, "").trim())
+    .map((line) => line.replace(/^[-*]\s*/, "").replace(/^\d+\.\s*/, "").trim())
     .filter(Boolean);
 };
 
@@ -574,9 +574,9 @@ function App() {
                 <li>Face manipulation score: {formatPercent(scan.comparison.rawScores.deepfake)}</li>
                 {scan.envelope?.signals?.map((signal) => (
                   <li key={`sig-${signal.name}`}>
-                    {signal.name} [{signal.signal_class}] — {signal.status}
-                    {signal.ai_score != null ? ` · ai ${formatPercent(signal.ai_score)}` : ""}
-                    {signal.manipulation_score != null ? ` · manip ${formatPercent(signal.manipulation_score)}` : ""}
+                    {signal.name} [{signal.signal_class}] - {signal.status}
+                    {signal.ai_score != null ? ` | ai ${formatPercent(signal.ai_score)}` : ""}
+                    {signal.manipulation_score != null ? ` | manip ${formatPercent(signal.manipulation_score)}` : ""}
                   </li>
                 ))}
               </ul>

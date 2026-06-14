@@ -5,19 +5,37 @@ values. The frontend talks only to this backend; this backend holds the keys.
 """
 
 from functools import lru_cache
+from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(REPO_ROOT / ".env", REPO_ROOT / "backend" / ".env"),
+        extra="ignore",
+    )
 
     # --- Commercial detector APIs (Layer 1) ---
-    sightengine_api_user: str | None = None
-    sightengine_api_secret: str | None = None
+    sightengine_api_user: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SIGHTENGINE_API_USER", "VITE_SIGHTENGINE_API_USER"),
+    )
+    sightengine_api_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SIGHTENGINE_API_SECRET", "VITE_SIGHTENGINE_API_SECRET"),
+    )
     hive_api_key: str | None = None
     illuminarty_api_key: str | None = None
     ai_or_not_api_key: str | None = None
+
+    # --- Local trained detector ---
+    local_model_checkpoint: str = str(REPO_ROOT / "detector-trainer" / "output" / "best_model.pt")
+    local_model_name: str = "resnet50"
 
     # --- Forensic / context services ---
     serpapi_key: str | None = None  # reverse image search
