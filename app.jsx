@@ -99,14 +99,25 @@ const mapEnvelope = (envelope) => {
   return {
     local: toDetector(find("local")),
     sightengine: toDetector(find("sightengine")),
+    hive: toDetector(find("hive")),
   };
 };
 
-const buildComparison = (local, sightengine) => {
-  const localScore = local?.genai ?? null;
-  const sightengineScore = sightengine?.genai ?? null;
-  const usableScores = [localScore, sightengineScore].filter((score) => score != null);
-  const deepfakeScore = sightengine?.deepfake ?? null;
+const buildComparison = (detectors) => {
+  const detectorScores = [
+    ["local", detectors.local?.genai ?? null],
+    ["sightengine", detectors.sightengine?.genai ?? null],
+    ["hive", detectors.hive?.genai ?? null],
+  ];
+  const usableEntries = detectorScores.filter(([, score]) => score != null);
+  const usableScores = usableEntries.map(([, score]) => score);
+  const manipulationScores = [
+    detectors.sightengine?.deepfake ?? null,
+    detectors.hive?.deepfake ?? null,
+  ].filter((score) => score != null);
+  const deepfakeScore = manipulationScores.length
+    ? Math.max(...manipulationScores)
+    : null;
 
   if (usableScores.length === 0) {
     return {
@@ -118,7 +129,10 @@ const buildComparison = (local, sightengine) => {
   }
 
   const overallScore = usableScores.reduce((sum, score) => sum + score, 0) / usableScores.length;
-  const disagreement = usableScores.length === 2 ? Math.abs(localScore - sightengineScore) : 0.3;
+  const disagreement =
+    usableScores.length > 1
+      ? Math.max(...usableScores) - Math.min(...usableScores)
+      : 0.3;
   const agreementStrength = 1 - disagreement;
   const certainty = Math.abs(overallScore - 0.5) * 2;
   const confidence = clampScore(0.25 + agreementStrength * 0.45 + certainty * 0.3);
@@ -127,24 +141,25 @@ const buildComparison = (local, sightengine) => {
   const visualChecks = [];
   const userSummary = [];
   const nextSteps = [];
-  if (usableScores.length === 2) {
+  if (usableScores.length > 1) {
     explanation.push(
       `Veil found a strong authenticity warning in the image.`
     );
     explanation.push(
-      `A second check agreed with the warning, so Veil is more confident in the result.`
+      usableScores.length > 2
+        ? `Multiple checks agreed with the warning, so Veil is more confident in the result.`
+        : `A second check agreed with the warning, so Veil is more confident in the result.`
     );
     explanation.push(
       disagreement < 0.15
         ? "The image was flagged consistently across Veil's checks."
         : disagreement < 0.35
           ? "The image was flagged unevenly, so Veil is treating the result with caution."
-          : "Veil's checks disagreed, so treat this result as uncertain."
+        : "Veil's checks disagreed, so treat this result as uncertain."
     );
-  } else if (localScore != null) {
-    explanation.push("Veil completed one authenticity check, but one external check was unavailable.");
   } else {
-    explanation.push("Veil completed one authenticity check, but one internal check was unavailable.");
+    const onlyDetector = usableEntries[0]?.[0] ?? "one detector";
+    explanation.push(`Veil completed one authenticity check (${onlyDetector}), but other checks were unavailable.`);
   }
 
   if (overallScore >= 0.7) {
@@ -194,14 +209,21 @@ const buildComparison = (local, sightengine) => {
           : disagreement < 0.35
             ? "Partial agreement"
             : "Low agreement"
+        : usableScores.length > 2
+          ? disagreement < 0.15
+            ? "Strong agreement"
+            : disagreement < 0.35
+              ? "Partial agreement"
+              : "Low agreement"
         : "Single-detector result",
     explanation,
     visualChecks,
     userSummary,
     nextSteps,
     rawScores: {
-      local: localScore,
-      sightengine: sightengineScore,
+      local: detectorScores.find(([name]) => name === "local")?.[1] ?? null,
+      sightengine: detectorScores.find(([name]) => name === "sightengine")?.[1] ?? null,
+      hive: detectorScores.find(([name]) => name === "hive")?.[1] ?? null,
       deepfake: deepfakeScore,
     },
   };
@@ -222,9 +244,6 @@ function App() {
   const [motionMode, setMotionMode] = useState("on");
   const [backendStatus, setBackendStatus] = useState(null);
 
-  const localScore = scan?.local?.genai ?? null;
-  const sightengineScore = scan?.sightengine?.genai ?? null;
-  const deepfakeScore = scan?.sightengine?.deepfake ?? null;
   const overallScore = scan?.comparison?.overallScore ?? null;
   const confidenceScore = scan?.comparison?.confidence ?? null;
   const resultRisk = useMemo(() => riskLabel(overallScore), [overallScore]);
@@ -295,16 +314,17 @@ function App() {
 
     try {
       const envelope = await runScan(file);
-      const { local, sightengine } = mapEnvelope(envelope);
+      const detectors = mapEnvelope(envelope);
 
       // Surface a backend-side signal failure (e.g. Sightengine rejected the
       // key) instead of silently scoring it as missing.
-      if (sightengine?.status === "error") {
-        setError(`Sightengine error from backend: ${sightengine.error}`);
+      const failedSignal = Object.entries(detectors).find(([, signal]) => signal?.status === "error");
+      if (failedSignal) {
+        setError(`${failedSignal[0]} error from backend: ${failedSignal[1].error}`);
       }
 
-      const comparison = buildComparison(local, sightengine);
-      const nextScan = { local, sightengine, comparison, envelope };
+      const comparison = buildComparison(detectors);
+      const nextScan = { ...detectors, comparison, envelope };
 
       setScan(nextScan);
       setHistory((current) => [
@@ -571,6 +591,7 @@ function App() {
                 ))}
                 <li>Internal score: {formatPercent(scan.comparison.rawScores.local)}</li>
                 <li>External (Sightengine) score: {formatPercent(scan.comparison.rawScores.sightengine)}</li>
+                <li>External (Hive) score: {formatPercent(scan.comparison.rawScores.hive)}</li>
                 <li>Face manipulation score: {formatPercent(scan.comparison.rawScores.deepfake)}</li>
                 {scan.envelope?.signals?.map((signal) => (
                   <li key={`sig-${signal.name}`}>

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SIGHTENGINE_API_SECRET", "VITE_SIGHTENGINE_API_SECRET"),
     )
     hive_api_key: str | None = None
+    hive_api_url: str = "https://api.thehive.ai/api/v2/task/sync"
     illuminarty_api_key: str | None = None
     ai_or_not_api_key: str | None = None
 

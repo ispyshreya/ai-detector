@@ -26,6 +26,12 @@ def all_signals() -> list[Signal]:
         pass
 
     try:
+        from app.signals.hive import HiveSignal
+        signals.append(HiveSignal())
+    except Exception:  # noqa: BLE001 - never let one signal break the registry
+        pass
+
+    try:
         from app.signals.exif import ExifSignal
         signals.append(ExifSignal())
     except Exception:  # noqa: BLE001
