@@ -62,6 +62,33 @@ Three logical pools, all described by a single manifest.
 | **In-dist test** | "Fair" score | Held-out split of the same generators/sources as train | ~20k |
 | **Wild test** | Honest real-world score | In-house: real photos + **Midjourney, DALL·E 3, Flux** (all excluded from training) | ~2–5k |
 
+### Selected datasets (finalized 2026-07-17)
+
+**Train + in-distribution test:**
+- **`cartografia/unbiased-tiny-genimage`** (Kaggle, 2.5GB) — GenImage-derived,
+  organized by generator (ADM, BigGAN, GLIDE, SD 1.4/1.5, VQDM, wukong + real
+  ImageNet). Multi-generator core; its per-generator folders map directly onto the
+  group-aware split. **Its Midjourney subset is held out** → becomes wild-test MJ.
+- **`rhythmghai/ai-vs-real-images-dataset`** (Kaggle, 249MB, usability 1.0) —
+  higher-resolution real+fake supplement (categories: animals/city/food/nature).
+  Narrows the resolution gap to the 1024px wild set, fighting the resolution
+  shortcut (§3a).
+
+**Wild test (all unseen by training):**
+- **Midjourney** — held-out GenImage MJ subset (free, already present).
+- **DALL·E 3** — self-generate ~200 via OpenAI (~$8). Chosen over Kaggle because
+  available DALL·E 3 sets are thin/mislabeled; DALL·E 3 is also architecturally
+  distinct from the SD-family training generators, making it the strongest
+  generalization probe.
+- **Flux** — self-generate ~400 via Replicate (~$1–2); only single-class Flux sets
+  exist on Kaggle.
+- **Real wild** — a distinct real-photo source (NOT the GenImage reals) so real
+  generalization is honestly tested.
+
+Wild-set generation total ≈ **$10**, deferred to pipeline-run time; needs OpenAI +
+Replicate keys and explicit spend go-ahead. Scripts written but never run without
+confirmation.
+
 **Manifest** is the single interface between data and models — a CSV/Parquet with
 columns: `path, label(real/fake), generator, source, split`. No model touches raw
 folders directly.
