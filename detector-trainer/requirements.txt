@@ -1,0 +1,20 @@
+# Veil detector-trainer dependencies
+# Tested versions: torch 2.8.0, torchvision 0.23.0, open_clip_torch 3.3.0
+#
+# Core (data pipeline + models)
+torch>=2.2
+torchvision>=0.17
+numpy>=1.24
+pandas>=2.0
+Pillow>=10.0
+imagehash>=4.3          # perceptual-hash dedup (data/manifest.py)
+
+# Evaluation harness
+scikit-learn>=1.3       # AUROC and metrics (eval/harness.py)
+matplotlib>=3.7         # ROC / per-generator plots
+
+# CLIP contender
+open_clip_torch>=2.24   # frozen ViT-L/14 backbone (models/clip_head.py); pulls timm, ftfy
+
+# Dev / test (optional — test files also run standalone without pytest)
+pytest>=7.0
