@@ -24,3 +24,6 @@ __pycache__/
 
 # Local model artifacts
 detector-trainer/output/final_model.pt
+
+# Training run artifacts
+detector-trainer/runs/
