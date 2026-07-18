@@ -369,6 +369,7 @@ def train_head(
     batch_size: Optional[int] = None,
     device: Optional[str] = None,
     seed: int = 42,
+    class_weight: bool = True,
     verbose: bool = False,
 ) -> TrainHeadResult:
     """Train a head on cached CLIP features.  Cheap: minutes, CPU-ok.
@@ -389,7 +390,13 @@ def train_head(
 
     head = build_head(head_type, feat_dim, hidden=hidden).to(device)
     opt = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=weight_decay)
-    loss_fn = nn.BCEWithLogitsLoss()
+    pos_weight = None
+    if class_weight:
+        n_pos = float((y == 1).sum())
+        n_neg = float((y == 0).sum())
+        if n_pos > 0 and n_neg > 0:
+            pos_weight = torch.tensor([n_neg / n_pos], dtype=torch.float32, device=device)
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     n = X.shape[0]
     bs = batch_size or n

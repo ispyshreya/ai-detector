@@ -263,6 +263,23 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _compute_pos_weight(manifest, split, device):
+    """Inverse-frequency weight for BCE positives (fake), to counter imbalance.
+
+    pos_weight = n_real / n_fake on the given split, so the majority class stops
+    dominating the loss. Returns None if a class is empty.
+    """
+    import pandas as pd
+
+    df = pd.read_csv(manifest)
+    df = df[df["split"] == split]
+    n_pos = float((df["label"] == 1).sum())
+    n_neg = float((df["label"] == 0).sum())
+    if n_pos == 0 or n_neg == 0:
+        return None
+    return torch.tensor([n_neg / n_pos], dtype=torch.float32, device=device)
+
+
 def train(args: argparse.Namespace) -> dict:
     """Full training run: build model, fit ``args.epochs``, checkpoint, report."""
     set_seed(args.seed)
@@ -271,7 +288,10 @@ def train(args: argparse.Namespace) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     model = build_model(args.model, pretrained=args.pretrained).to(device)
-    criterion = nn.BCEWithLogitsLoss()
+    pos_weight = _compute_pos_weight(args.manifest, "train", device) if args.class_weight else None
+    if pos_weight is not None:
+        print(f"class weighting on: pos_weight={pos_weight.item():.3f}", flush=True)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
@@ -341,6 +361,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--num-workers", type=int, default=int(os.environ.get("VEIL_NUM_WORKERS", 4)))
     p.add_argument("--seed", type=int, default=42, help="Fixed seed for the honest comparison.")
+    p.add_argument("--class-weight", action=argparse.BooleanOptionalAction, default=True,
+                   help="Weight BCE by inverse class frequency to counter imbalance (default on).")
     p.add_argument("--pretrained", action="store_true",
                    help="Initialize backbone from ImageNet weights (spec baseline init).")
     return p

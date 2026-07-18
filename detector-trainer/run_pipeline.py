@@ -270,6 +270,7 @@ def stage_train_resnet(args) -> dict:
         num_workers=args.num_workers,
         seed=args.seed,
         pretrained=args.pretrained,
+        class_weight=args.class_weight,
     )
     print(f"[train_resnet] training resnet50 for {ns.epochs} epoch(s) -> {out_dir}")
     results = resnet_train.train(ns)
@@ -342,6 +343,7 @@ def stage_train_clip(args, extractor=None) -> dict:
             backbone_name=args.clip_backbone,
             epochs=args.clip_epochs,
             lr=args.clip_lr,
+            class_weight=args.class_weight,
             verbose=False,
         )
         head_results[head_type] = {
@@ -780,6 +782,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--test-indist-frac", type=float, default=0.15)
     p.add_argument("--no-dedup", action="store_true", help="skip perceptual dedup.")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--class-weight", action=argparse.BooleanOptionalAction, default=True,
+                   help="Inverse-frequency BCE weighting for both models (default on).")
 
     # ResNet stage.
     p.add_argument("--resnet-epochs", type=int, default=10)
