@@ -27,3 +27,6 @@ detector-trainer/output/final_model.pt
 
 # Training run artifacts
 detector-trainer/runs/
+
+# Generated wild-set images
+detector-trainer/wild_data/
