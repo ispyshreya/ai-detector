@@ -38,7 +38,7 @@ class Settings(BaseSettings):
 
     # --- Local trained detector ---
     local_model_checkpoint: str = str(REPO_ROOT / "detector-trainer" / "output" / "best_model.pt")
-    local_model_name: str = "resnet50"
+    local_model_name: str = "resnet50_dropout"
 
     # --- Forensic / context services ---
     serpapi_key: str | None = None  # reverse image search

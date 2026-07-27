@@ -18,3 +18,11 @@ open_clip_torch>=2.24   # frozen ViT-L/14 backbone (models/clip_head.py); pulls 
 
 # Dev / test (optional — test files also run standalone without pytest)
 pytest>=7.0
+
+# Local detector API and visual explanation endpoint
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+transformers==4.51.3
+accelerate>=1.6.0
+safetensors>=0.5.0

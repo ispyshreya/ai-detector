@@ -32,7 +32,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torchvision import transforms
+from torchvision import models, transforms
 
 # Model builders live under models/. Support running both as a script (bare
 # "models.resnet") and as part of a package by fixing sys.path to this dir.
@@ -73,6 +73,13 @@ def build_model(name: str, pretrained: bool = False) -> nn.Module:
         An ``nn.Module`` conforming to the inference contract.
     """
     key = name.lower().strip()
+
+    if key in {"resnet50_dropout", "resnet50-legacy"}:
+        weights = models.ResNet50_Weights.IMAGENET1K_V2 if pretrained else None
+        model = models.resnet50(weights=weights)
+        in_features = model.fc.in_features
+        model.fc = nn.Sequential(nn.Dropout(0.3), nn.Linear(in_features, 1))
+        return model
 
     if key.startswith("resnet"):
         # Currently only resnet50 is implemented; the "resnet*" prefix leaves room

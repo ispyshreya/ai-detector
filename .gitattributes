@@ -1,0 +1,1 @@
+detector-trainer/output/*.pt filter=lfs diff=lfs merge=lfs -text
