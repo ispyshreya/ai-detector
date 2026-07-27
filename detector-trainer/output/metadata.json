@@ -1,0 +1,13 @@
+{
+  "class_to_idx": {
+    "FAKE": 0,
+    "REAL": 1
+  },
+  "output": {
+    "activation": "sigmoid",
+    "positive_class": "FAKE",
+    "negative_class": "REAL",
+    "score_meaning": "probability_fake_or_ai_generated",
+    "threshold": 0.5
+  }
+}
