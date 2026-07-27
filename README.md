@@ -26,7 +26,7 @@ The application is intended to support human review. It should not be treated as
 
 ## Architecture
 
-Veil is a Vite + React frontend that communicates with detector services through HTTP endpoints.
+Veil is a Vite + React frontend backed by one FastAPI service.
 
 ```text
 User upload
@@ -34,15 +34,16 @@ User upload
    v
 React dashboard
    |
-   |-- Local detector API: /predict
+   |-- Unified signal API: /scan
    |-- Local visual explanation API: /explain
-   |-- Optional external detector: Sightengine
    |
    v
 Veil score + confidence + explanation
 ```
 
-The frontend expects compatible API endpoints but does not require model files to be committed to the repository.
+The backend runs the local checkpoint and any configured external signals. The
+VLM is loaded lazily on the first explanation request and never changes the
+detector score.
 
 ## Repository Structure
 
@@ -66,16 +67,14 @@ Create a local `.env` file from the example:
 copy .env.example .env
 ```
 
-Configure the detector endpoints and optional Sightengine credentials:
+Configure the frontend to use the unified backend:
 
 ```env
-VITE_CUSTOM_API_URL="http://127.0.0.1:8000/predict"
-VITE_EXPLANATION_API_URL="http://127.0.0.1:8000/explain"
-VITE_CUSTOM_API_KEY=""
-
-VITE_SIGHTENGINE_API_USER="your_sightengine_user"
-VITE_SIGHTENGINE_API_SECRET="your_sightengine_secret"
+VITE_VEIL_API_URL="http://127.0.0.1:8000"
 ```
+
+Copy `backend/.env.example` to `backend/.env` to configure server-side
+detector credentials or choose a different `VLM_MODEL_ID`.
 
 ## Development
 
@@ -117,20 +116,11 @@ Veil expects a local API server on port `8000` by default.
 
 Returns API status and model metadata.
 
-### `POST /predict`
+### `POST /scan`
 
 Accepts a multipart image upload with the field name `media`.
 
-Expected response:
-
-```json
-{
-  "genai": 0.87,
-  "label": "FAKE",
-  "confidence": 0.87,
-  "score_meaning": "probability_fake_or_ai_generated"
-}
-```
+Returns the unified signal envelope used by the dashboard.
 
 ### `POST /explain`
 
@@ -141,6 +131,8 @@ Expected response:
 ```json
 {
   "explanation": "- Possible warning sign...",
+  "model": "Qwen/Qwen2.5-VL-3B-Instruct",
+  "used_fallback": false,
   "note": "Visual explanations are AI-generated and should be treated as possible warning signs, not proof."
 }
 ```

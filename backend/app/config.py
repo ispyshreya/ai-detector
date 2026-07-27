@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     # --- LLM explanation layer (Layer 3) ---
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-opus-4-8"
+    vlm_model_id: str = "Qwen/Qwen2.5-VL-3B-Instruct"
+    vlm_max_new_tokens: int = 160
 
     # --- Behavior ---
     signal_timeout_seconds: float = 6.0  # per-signal cap; supports p95 < 6s goal

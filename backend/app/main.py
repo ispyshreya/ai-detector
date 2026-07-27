@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import time
+from io import BytesIO
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image, UnidentifiedImageError
 
 from app.config import get_settings
+from app.explain.vlm import explain_image
 from app.schemas import ScanResponse, SignalResult, SignalStatus
 from app.signals.base import ImageInput, Signal
 from app.signals.registry import available_signals
@@ -58,7 +61,11 @@ async def _run_signal(signal: Signal, image: ImageInput) -> SignalResult:
 @app.get("/health")
 async def health() -> dict:
     sigs = available_signals()
-    return {"status": "ok", "available_signals": [s.name for s in sigs]}
+    return {
+        "status": "ok",
+        "available_signals": [s.name for s in sigs],
+        "visual_explanation_model": settings.vlm_model_id,
+    }
 
 
 @app.post("/scan", response_model=ScanResponse)
@@ -86,3 +93,33 @@ async def scan(media: UploadFile = File(...)) -> ScanResponse:
     # response.explanation = await explain(response)
 
     return response
+
+
+@app.post("/explain")
+async def explain(
+    media: UploadFile = File(...),
+    veil_score: float | None = Form(default=None, ge=0.0, le=1.0),
+) -> dict:
+    """Describe visible evidence without allowing the VLM to alter the score."""
+    if media.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        raise HTTPException(400, "Unsupported file type. Use JPG, PNG, or WEBP.")
+
+    data = await media.read()
+    try:
+        image = Image.open(BytesIO(data)).convert("RGB")
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(400, "Uploaded file is not a valid image.") from exc
+
+    try:
+        result = await asyncio.to_thread(explain_image, image, veil_score)
+    except Exception as exc:  # lazy model download/load failures are recoverable
+        raise HTTPException(
+            503, f"Visual explanation model is unavailable: {exc}"
+        ) from exc
+
+    return {
+        "explanation": result.text,
+        "model": result.model,
+        "used_fallback": result.used_fallback,
+        "note": result.note,
+    }

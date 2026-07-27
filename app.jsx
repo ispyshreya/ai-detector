@@ -103,6 +103,19 @@ const mapEnvelope = (envelope) => {
   };
 };
 
+const runVisualExplanation = async (file, score) => {
+  const formData = new FormData();
+  formData.append("media", file, file.name);
+  if (Number.isFinite(score)) formData.append("veil_score", String(score));
+
+  const response = await fetch(`${API_BASE}/explain`, { method: "POST", body: formData });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body?.detail || `Visual explanation returned HTTP ${response.status}.`);
+  }
+  return body;
+};
+
 const buildComparison = (detectors) => {
   const detectorScores = [
     ["local", detectors.local?.genai ?? null],
@@ -343,6 +356,15 @@ function App() {
       // builds it. Until then the guidance below is generated client-side.
       if (envelope.explanation) {
         setVisualExplanation({ explanation: envelope.explanation });
+      } else {
+        setExplaining(true);
+        try {
+          setVisualExplanation(await runVisualExplanation(file, comparison.overallScore));
+        } catch (explanationError) {
+          setVisualExplanation({ error: explanationError.message });
+        } finally {
+          setExplaining(false);
+        }
       }
     } catch (err) {
       setError(err.message || "Scan failed.");
