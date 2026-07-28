@@ -218,6 +218,17 @@ def stage_manifest(args) -> dict:
         print(f"    {s['source']}/{Path(s['dir']).name}: "
               f"label={s['label']} generator={s['generator']}")
 
+    wild_real_sources = set(getattr(args, "wild_real_sources", []) or [])
+    if wild_real_sources:
+        discovered = {s["source"] for s in sources}
+        missing = wild_real_sources - discovered
+        if missing:
+            print(f"[manifest] WARNING: --wild-real-sources {sorted(missing)} not "
+                  f"among discovered sources {sorted(discovered)}; nothing held out "
+                  "for those (check the folder/root names match).")
+        print(f"[manifest] holding out real sources into test_wild: "
+              f"{sorted(wild_real_sources & discovered)}")
+
     df = build_manifest(
         sources,
         dedup_distance=args.dedup_distance,
@@ -225,6 +236,7 @@ def stage_manifest(args) -> dict:
         test_indist_frac=args.test_indist_frac,
         seed=args.seed,
         do_dedup=not args.no_dedup,
+        wild_sources=wild_real_sources,
     )
     out = write_manifest(df, args.manifest)
     counts = df["split"].value_counts().to_dict()
@@ -780,6 +792,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="dataset root dir(s) to auto-discover (e.g. /kaggle/input/*).")
     p.add_argument("--manifest", default="data/manifest.csv",
                    help="manifest CSV path (written by manifest stage, read by others).")
+    p.add_argument("--wild-real-sources", dest="wild_real_sources", nargs="*", default=[],
+                   help="source names (dataset-root folder names) whose REAL images "
+                        "are held out into test_wild instead of train — e.g. phone / "
+                        "ID captures used to measure real-photo false positives.")
     p.add_argument("--folder-map", default=None,
                    help="optional JSON file or inline JSON: folder-name -> "
                         "{label,generator} overrides for classification.")
