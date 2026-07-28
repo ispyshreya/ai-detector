@@ -146,10 +146,13 @@ const buildComparison = (detectors) => {
     usableScores.length > 1
       ? Math.max(...usableScores) - Math.min(...usableScores)
       : 0.3;
-  const inconclusive = usableScores.length > 1 && disagreement >= 0.5;
+  const inconclusive = usableScores.length < 2 || disagreement >= 0.5;
   const agreementStrength = 1 - disagreement;
   const certainty = Math.abs(overallScore - 0.5) * 2;
-  const confidence = clampScore(0.25 + agreementStrength * 0.45 + certainty * 0.3);
+  const confidence =
+    usableScores.length < 2
+      ? clampScore(0.2 + certainty * 0.2)
+      : clampScore(0.25 + agreementStrength * 0.45 + certainty * 0.3);
 
   const explanation = [];
   const visualChecks = [];
@@ -179,7 +182,15 @@ const buildComparison = (detectors) => {
     explanation.push(`Veil completed one authenticity check (${onlyDetector}), but other checks were unavailable.`);
   }
 
-  if (overallScore >= 0.7) {
+  if (usableScores.length < 2) {
+    userSummary.push("Only one AI detector returned a score, so Veil cannot corroborate the result.");
+    userSummary.push("Treat this scan as inconclusive even if the available detector is highly certain.");
+    userSummary.push("A model can be confidently wrong on images unlike its training data.");
+    visualChecks.push("The visual explainer did not identify a specific artifact that confirms the detector result.");
+    visualChecks.push("Check the original source, capture context, and metadata instead of relying on this score alone.");
+    nextSteps.push("Retry the external detectors or verify that their credentials and quotas are available.");
+    nextSteps.push("Use reverse-image search or another independent authenticity service before acting.");
+  } else if (overallScore >= 0.7) {
     userSummary.push("This image should not be trusted on its own.");
     userSummary.push("It may be AI-generated, edited, or used out of context.");
     userSummary.push("If someone is using this image to ask for money, identity documents, login codes, crypto, gift cards, or urgent action, treat it as suspicious.");
@@ -370,7 +381,12 @@ function App() {
       } else {
         setExplaining(true);
         try {
-          setVisualExplanation(await runVisualExplanation(file, comparison.overallScore));
+          setVisualExplanation(
+            await runVisualExplanation(
+              file,
+              comparison.inconclusive ? null : comparison.overallScore
+            )
+          );
         } catch (explanationError) {
           setVisualExplanation({ error: explanationError.message });
         } finally {
