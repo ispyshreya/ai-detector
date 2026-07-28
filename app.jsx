@@ -124,6 +124,8 @@ const buildComparison = (detectors) => {
   ];
   const usableEntries = detectorScores.filter(([, score]) => score != null);
   const usableScores = usableEntries.map(([, score]) => score);
+  const usableNames = new Set(usableEntries.map(([name]) => name));
+  const hasExternalDetector = usableNames.has("sightengine") || usableNames.has("hive");
   const manipulationScores = [
     detectors.sightengine?.deepfake ?? null,
     detectors.hive?.deepfake ?? null,
@@ -146,12 +148,17 @@ const buildComparison = (detectors) => {
     usableScores.length > 1
       ? Math.max(...usableScores) - Math.min(...usableScores)
       : 0.3;
-  const inconclusive = usableScores.length < 2 || disagreement >= 0.5;
+  const inconclusive =
+    usableScores.length === 0 ||
+    (usableScores.length === 1 && !hasExternalDetector) ||
+    (usableScores.length > 1 && disagreement >= 0.5);
   const agreementStrength = 1 - disagreement;
   const certainty = Math.abs(overallScore - 0.5) * 2;
   const confidence =
-    usableScores.length < 2
-      ? clampScore(0.2 + certainty * 0.2)
+    usableScores.length === 1
+      ? hasExternalDetector
+        ? clampScore(0.5 + certainty * 0.25)
+        : clampScore(0.2 + certainty * 0.2)
       : clampScore(0.25 + agreementStrength * 0.45 + certainty * 0.3);
 
   const explanation = [];
@@ -182,7 +189,7 @@ const buildComparison = (detectors) => {
     explanation.push(`Veil completed one authenticity check (${onlyDetector}), but other checks were unavailable.`);
   }
 
-  if (usableScores.length < 2) {
+  if (usableScores.length < 2 && !hasExternalDetector) {
     userSummary.push("Only one AI detector returned a score, so Veil cannot corroborate the result.");
     userSummary.push("Treat this scan as inconclusive even if the available detector is highly certain.");
     userSummary.push("A model can be confidently wrong on images unlike its training data.");
@@ -231,6 +238,7 @@ const buildComparison = (detectors) => {
     overallScore,
     confidence,
     inconclusive,
+    provisional: usableScores.length === 1 && hasExternalDetector,
     disagreement,
     agreement:
       usableScores.length === 2
@@ -351,14 +359,15 @@ function App() {
       const envelope = await runScan(file);
       const detectors = mapEnvelope(envelope);
 
-      // Surface a backend-side signal failure (e.g. Sightengine rejected the
-      // key) instead of silently scoring it as missing.
-      const failedSignal = Object.entries(detectors).find(([, signal]) => signal?.status === "error");
-      if (failedSignal) {
-        setError(`${failedSignal[0]} error from backend: ${failedSignal[1].error}`);
-      }
-
       const comparison = buildComparison(detectors);
+      if (comparison.overallScore == null) {
+        const failedSignal = Object.entries(detectors).find(([, signal]) => signal?.status === "error");
+        setError(
+          failedSignal
+            ? `No detector score is available. ${failedSignal[0]}: ${failedSignal[1].error}`
+            : "No detector returned a usable score."
+        );
+      }
       const nextScan = { ...detectors, comparison, envelope };
 
       setScan(nextScan);
@@ -427,7 +436,7 @@ function App() {
           <span className={`status-dot ${loading ? "busy" : ""}`}></span>
           <div>
             <strong>{loading ? "Scanning" : "Ready"}</strong>
-            <span>Local analysis enabled</span>
+          <span>Authenticity services enabled</span>
           </div>
         </div>
       </header>
@@ -555,7 +564,7 @@ function App() {
                   {resultRisk.text}
                 </h2>
                 <div className="confidence-readout">
-                  <span>Confidence</span>
+                  <span>{scan.comparison.provisional ? "Provisional confidence" : "Confidence"}</span>
                   <strong>{formatPercent(confidenceScore)}</strong>
                 </div>
                 <div className={`risk-orb ${resultRisk.type}`}>
