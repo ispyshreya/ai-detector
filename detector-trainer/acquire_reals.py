@@ -153,7 +153,7 @@ def acquire_ffhq(out: Path, count: int) -> int:
         return 0
     got = 0
     try:
-        ds = load_dataset("nuwandaa/ffhq256", split="train", streaming=True)
+        ds = load_dataset("merkol/ffhq-256", split="train", streaming=True)
         for i, row in enumerate(ds):
             if have + got >= count:
                 break
