@@ -559,6 +559,27 @@ def write_report(
     lines.append(_md_table(pd.DataFrame(id_rows)))
     lines.append("")
 
+    # Real-photo false positives — the headline correctness number for the
+    # false-positive bug. Reported on the in-dist reals and the held-out wild
+    # reals separately so real-world generalization is visible.
+    lines.append("### Real-photo false positives")
+    lines.append("")
+    lines.append("Fraction of REAL images wrongly scored FAKE (lower is better).")
+    lines.append("")
+    fpr_rows = []
+    for name, preds in predictions_by_model.items():
+        indist = preds[preds["split"] == in_dist_split]
+        wild = preds[preds["split"] == "test_wild"]
+        fpr_rows.append(
+            {
+                "model": name,
+                "real_fpr_indist": real_photo_false_positive_rate(indist, threshold),
+                "real_fpr_wild": real_photo_false_positive_rate(wild, threshold),
+            }
+        )
+    lines.append(_md_table(pd.DataFrame(fpr_rows)))
+    lines.append("")
+
     # Panel 2: cross-generator per-generator (headline).
     lines.append("## Panel 2 — Cross-generator (headline)")
     lines.append("")

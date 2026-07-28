@@ -244,6 +244,17 @@ def test_real_photo_fpr_no_reals_is_nan():
     assert np.isnan(harness.real_photo_false_positive_rate(preds, 0.5))
 
 
+def test_report_includes_real_photo_fpr(tmp_path=None):
+    import tempfile
+
+    out_dir = Path(tmp_path) if tmp_path else Path(tempfile.mkdtemp())
+    preds = _synthetic_predictions()
+    report_path = harness.write_report({"resnet50": preds}, out_dir)
+    text = report_path.read_text()
+    assert "Real-photo false positives" in text
+    assert "real_fpr" in text
+
+
 # --------------------------------------------------------------------------- #
 # Plain runner (no pytest required)
 # --------------------------------------------------------------------------- #
