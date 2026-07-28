@@ -146,6 +146,7 @@ const buildComparison = (detectors) => {
     usableScores.length > 1
       ? Math.max(...usableScores) - Math.min(...usableScores)
       : 0.3;
+  const inconclusive = usableScores.length > 1 && disagreement >= 0.5;
   const agreementStrength = 1 - disagreement;
   const certainty = Math.abs(overallScore - 0.5) * 2;
   const confidence = clampScore(0.25 + agreementStrength * 0.45 + certainty * 0.3);
@@ -155,21 +156,24 @@ const buildComparison = (detectors) => {
   const userSummary = [];
   const nextSteps = [];
   if (usableScores.length > 1) {
-    explanation.push(
-      `Veil found a strong authenticity warning in the image.`
-    );
-    explanation.push(
-      usableScores.length > 2
-        ? `Multiple checks agreed with the warning, so Veil is more confident in the result.`
-        : `A second check agreed with the warning, so Veil is more confident in the result.`
-    );
-    explanation.push(
-      disagreement < 0.15
-        ? "The image was flagged consistently across Veil's checks."
-        : disagreement < 0.35
-          ? "The image was flagged unevenly, so Veil is treating the result with caution."
-        : "Veil's checks disagreed, so treat this result as uncertain."
-    );
+    if (inconclusive) {
+      explanation.push("Veil's authenticity checks strongly contradicted one another.");
+      explanation.push("The combined percentage is only a midpoint between opposing results, not evidence that the image is 50% fake.");
+      explanation.push("Treat this scan as inconclusive and verify the image through its source or context.");
+    } else {
+      explanation.push(
+        overallScore >= 0.7
+          ? "Veil found an authenticity warning in the image."
+          : overallScore < 0.4
+            ? "Veil's checks found low AI-generation risk."
+            : "Veil found mixed authenticity signals."
+      );
+      explanation.push(
+        disagreement < 0.15
+          ? "The checks returned closely aligned scores."
+          : "The checks differed somewhat, so Veil is treating the result with caution."
+      );
+    }
   } else {
     const onlyDetector = usableEntries[0]?.[0] ?? "one detector";
     explanation.push(`Veil completed one authenticity check (${onlyDetector}), but other checks were unavailable.`);
@@ -215,6 +219,8 @@ const buildComparison = (detectors) => {
   return {
     overallScore,
     confidence,
+    inconclusive,
+    disagreement,
     agreement:
       usableScores.length === 2
         ? disagreement < 0.15
@@ -259,7 +265,12 @@ function App() {
 
   const overallScore = scan?.comparison?.overallScore ?? null;
   const confidenceScore = scan?.comparison?.confidence ?? null;
-  const resultRisk = useMemo(() => riskLabel(overallScore), [overallScore]);
+  const resultRisk = useMemo(
+    () => scan?.comparison?.inconclusive
+      ? { text: "Inconclusive", type: "unknown" }
+      : riskLabel(overallScore),
+    [overallScore, scan?.comparison?.inconclusive]
+  );
   const visualBullets = useMemo(
     () => formatBullets(visualExplanation?.explanation),
     [visualExplanation]
@@ -345,7 +356,7 @@ function App() {
           filename: file.name,
           date: new Date().toLocaleString(),
           score: formatPercent(comparison.overallScore),
-          verdict: verdictLabel(comparison.overallScore),
+          verdict: comparison.inconclusive ? "Inconclusive" : verdictLabel(comparison.overallScore),
           confidence: formatPercent(comparison.confidence),
         },
         ...current,
@@ -533,7 +544,7 @@ function App() {
                 </div>
                 <div className={`risk-orb ${resultRisk.type}`}>
                   <strong>{formatPercent(overallScore)}</strong>
-                  <span>{scoreCaption(overallScore)}</span>
+                  <span>{scan.comparison.inconclusive ? "checks disagree" : scoreCaption(overallScore)}</span>
                 </div>
                 <button className="secondary-button" onClick={() => navigate("upload")}>
                   Check Another Image

@@ -131,7 +131,7 @@ Expected response:
 ```json
 {
   "explanation": "- Possible warning sign...",
-  "model": "Qwen/Qwen2.5-VL-3B-Instruct",
+  "model": "HuggingFaceTB/SmolVLM-500M-Instruct",
   "used_fallback": false,
   "note": "Visual explanations are AI-generated and should be treated as possible warning signs, not proof."
 }
