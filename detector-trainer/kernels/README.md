@@ -64,6 +64,24 @@ USE_GIT  = False
 CODE_DIR = '/kaggle/input/veil-detector-code/detector-trainer'
 ```
 
+### Diverse real-world photos dataset (fixes real-photo false positives)
+The training reals + held-out phone-capture proxy live in a **separate** dataset
+(`veil-detector-reals`, ~939 MB) so they are not re-uploaded on every code change.
+Acquire and push them:
+```bash
+cd detector-trainer
+python3 acquire_reals.py --out real_world \
+    --coco 2000 --ffhq 1000 --unsplash 1000 --div2k 100
+# real_world/dataset-metadata.json already sets id -> <USER>/veil-detector-reals
+kaggle datasets create -p real_world --dir-mode zip        # first time
+kaggle datasets version -p real_world -m "refresh reals" --dir-mode zip  # updates
+```
+`kernel-metadata.json` already lists `sarthakhans01/veil-detector-reals` in
+`dataset_sources`, and the notebook passes each `real_*` folder as its own
+`--data-root` (so `source` == folder name) with
+`--wild-real-sources real_div2k_heldout` to hold the camera-native proxy out of
+training. **Do not** push `real_world/` inside the code dataset — keep it separate.
+
 ## Push the kernel and run
 
 ```bash
