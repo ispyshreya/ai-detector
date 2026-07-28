@@ -202,6 +202,37 @@ def test_split_routes_wild_sources_to_test_wild():
     print("PASS test_split_routes_wild_sources_to_test_wild")
 
 
+def test_split_wild_generators_override_makes_flux_trainable():
+    import pandas as pd
+    import importlib.util as _ilu
+    from pathlib import Path as _P
+
+    _mpath = _P(__file__).resolve().parent / "manifest.py"
+    _spec = _ilu.spec_from_file_location("veil_manifest_wildgen", _mpath)
+    m = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(m)
+
+    # 10 flux + 10 midjourney fakes + 10 reals.
+    df = pd.DataFrame(
+        {
+            "path": [f"/x/{i}.jpg" for i in range(30)],
+            "label": [1] * 20 + [0] * 10,
+            "generator": ["flux"] * 10 + ["midjourney"] * 10 + ["real"] * 10,
+            "source": ["gen"] * 20 + ["reals"] * 10,
+            "split": [""] * 30,
+        },
+        columns=m.MANIFEST_COLUMNS,
+    )
+    # Hold out ONLY midjourney; flux should now be trainable.
+    out = m.split(df, wild_generators=("midjourney",))
+    flux = out[out["generator"] == "flux"]
+    mj = out[out["generator"] == "midjourney"]
+    assert "test_wild" not in set(flux["split"]), set(flux["split"])
+    assert set(flux["split"]) <= {"train", "val", "test_indist"}
+    assert set(mj["split"]) == {"test_wild"}
+    print("PASS test_split_wild_generators_override_makes_flux_trainable")
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="veil_manifest_test_"))
     try:

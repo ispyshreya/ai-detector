@@ -67,6 +67,35 @@ def test_manifest_stage_holds_out_wild_real_sources():
     print("PASS test_manifest_stage_holds_out_wild_real_sources")
 
 
+def test_manifest_stage_wild_generators_folds_flux_into_training():
+    tmp = Path(tempfile.mkdtemp(prefix="veil_pipeline_gen_test_"))
+    real = _make_folder(tmp, "real_coco", 8, 0)
+    flux = _make_folder(tmp, "flux", 8, 100)
+    mj = _make_folder(tmp, "midjourney", 8, 200)
+
+    parser = run_pipeline.build_arg_parser()
+    manifest_path = tmp / "manifest.csv"
+    args = parser.parse_args([
+        "--stages", "manifest",
+        "--data-root", str(real), str(flux), str(mj),
+        "--manifest", str(manifest_path),
+        "--wild-generators", "midjourney",
+        "--no-dedup",
+    ])
+    run_pipeline.stage_manifest(args)
+
+    df = pd.read_csv(manifest_path)
+    flux_rows = df[df["generator"] == "flux"]
+    mj_rows = df[df["generator"] == "midjourney"]
+    # flux is now trainable (holding out only midjourney).
+    assert (flux_rows["label"] == 1).all(), "flux must be labelled fake"
+    assert "test_wild" not in set(flux_rows["split"]), set(flux_rows["split"])
+    assert "train" in set(flux_rows["split"])
+    # midjourney stays held out for the honest cross-generator test.
+    assert set(mj_rows["split"]) == {"test_wild"}
+    print("PASS test_manifest_stage_wild_generators_folds_flux_into_training")
+
+
 def _run_all() -> bool:
     import traceback
 

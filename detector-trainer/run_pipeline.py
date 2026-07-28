@@ -203,7 +203,7 @@ def stage_manifest(args) -> dict:
         test_indist_frac, seed, do_dedup) -> pd.DataFrame``
       * ``data.manifest.write_manifest(df, out_path) -> Path``
     """
-    from data.manifest import build_manifest, write_manifest
+    from data.manifest import build_manifest, write_manifest, WILD_GENERATORS
 
     overrides = _load_overrides(args.folder_map)
     sources = discover_sources(args.data_root, overrides=overrides)
@@ -229,6 +229,12 @@ def stage_manifest(args) -> dict:
         print(f"[manifest] holding out real sources into test_wild: "
               f"{sorted(wild_real_sources & discovered)}")
 
+    wild_generators = (
+        tuple(args.wild_generators) if getattr(args, "wild_generators", None)
+        else WILD_GENERATORS
+    )
+    print(f"[manifest] held-out generators (test_wild only): {sorted(wild_generators)}")
+
     df = build_manifest(
         sources,
         dedup_distance=args.dedup_distance,
@@ -237,6 +243,7 @@ def stage_manifest(args) -> dict:
         seed=args.seed,
         do_dedup=not args.no_dedup,
         wild_sources=wild_real_sources,
+        wild_generators=wild_generators,
     )
     out = write_manifest(df, args.manifest)
     counts = df["split"].value_counts().to_dict()
@@ -796,6 +803,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="source names (dataset-root folder names) whose REAL images "
                         "are held out into test_wild instead of train — e.g. phone / "
                         "ID captures used to measure real-photo false positives.")
+    p.add_argument("--wild-generators", dest="wild_generators", nargs="*", default=None,
+                   help="fake generators held out into test_wild (default: "
+                        "midjourney/dalle3/flux). Narrow it (e.g. 'midjourney') to "
+                        "fold flux/dalle3 into training for modern-generator coverage.")
     p.add_argument("--folder-map", default=None,
                    help="optional JSON file or inline JSON: folder-name -> "
                         "{label,generator} overrides for classification.")
