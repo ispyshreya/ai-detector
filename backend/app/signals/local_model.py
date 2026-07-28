@@ -42,6 +42,40 @@ def _load_build_model():
     return module.build_model
 
 
+def _load_clip_builder():
+    """Dynamically load ``build_clip_detector`` from the detector-trainer package.
+
+    Mirrors :func:`_load_build_model`; kept separate so the CLIP path (frozen
+    ViT-L/14 + trained head) can be swapped in without importing open_clip until
+    a CLIP checkpoint is actually served.
+    """
+    clip_path = REPO_ROOT / "detector-trainer" / "models" / "clip_head.py"
+    if not clip_path.exists():
+        raise FileNotFoundError("detector-trainer/models/clip_head.py was not found")
+
+    spec = importlib.util.spec_from_file_location("veil_clip_head", clip_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load {clip_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module.build_clip_detector
+
+
+def _confidence(ai_score: float, threshold: float) -> float:
+    """Confidence as normalized distance from the calibrated decision boundary.
+
+    0.0 exactly at the threshold (maximally uncertain), rising to 1.0 at either
+    extreme. Pivoting on the calibrated threshold — not a hardcoded 0.5 — means a
+    real photo scoring just under the boundary reads as confidently REAL.
+    """
+    threshold = min(max(threshold, 1e-6), 1.0 - 1e-6)
+    if ai_score >= threshold:
+        return (ai_score - threshold) / (1.0 - threshold)
+    return (threshold - ai_score) / threshold
+
+
 def _eval_transform():
     return transforms.Compose([
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
@@ -61,12 +95,22 @@ def _load_model():
     if not checkpoint.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
 
-    build_model = _load_build_model()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model(settings.local_model_name, pretrained=False)
-    model.load_state_dict(torch.load(checkpoint, map_location=device))
-    model = model.to(device)
-    model.eval()
+
+    if getattr(settings, "local_model_type", "resnet") == "clip":
+        # Frozen CLIP ViT-L/14 + trained head. The head checkpoint's sibling
+        # config.json records {backbone_name, feat_dim, head_type, hidden}.
+        build_clip_detector = _load_clip_builder()
+        config_path = checkpoint.parent / "config.json"
+        model = build_clip_detector(
+            config=config_path, head_ckpt=checkpoint, device=str(device)
+        )
+    else:
+        build_model = _load_build_model()
+        model = build_model(settings.local_model_name, pretrained=False)
+        model.load_state_dict(torch.load(checkpoint, map_location=device))
+        model = model.to(device)
+        model.eval()
 
     _MODEL = model
     _DEVICE = device
@@ -98,7 +142,8 @@ class LocalModelSignal(Signal):
         with torch.no_grad():
             ai_score = torch.sigmoid(model(tensor)).item()
 
-        confidence = ai_score if ai_score >= 0.5 else 1.0 - ai_score
+        threshold = float(getattr(get_settings(), "local_model_threshold", 0.5))
+        confidence = _confidence(ai_score, threshold)
         latency_ms = (time.perf_counter() - started) * 1000.0
 
         return SignalResult(

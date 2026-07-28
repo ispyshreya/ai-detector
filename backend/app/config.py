@@ -37,8 +37,15 @@ class Settings(BaseSettings):
     ai_or_not_api_key: str | None = None
 
     # --- Local trained detector ---
-    local_model_checkpoint: str = str(REPO_ROOT / "detector-trainer" / "output" / "best_model.pt")
-    local_model_name: str = "resnet50_dropout"
+    # Serves the retrained frozen-CLIP + MLP head winner (3% real-photo FPR),
+    # not the old overfit ResNet. Flip local_model_type back to "resnet" to serve
+    # a resnet50_dropout checkpoint instead.
+    local_model_type: str = "clip"
+    local_model_checkpoint: str = str(
+        REPO_ROOT / "detector-trainer" / "output" / "clip_mlp" / "clip_head_best.pt"
+    )
+    local_model_name: str = "clip_mlp"
+    local_model_threshold: float = 0.57  # calibrated for ~2% real-photo FPR
 
     # --- Forensic / context services ---
     serpapi_key: str | None = None  # reverse image search
