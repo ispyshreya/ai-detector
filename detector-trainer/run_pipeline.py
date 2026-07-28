@@ -457,7 +457,7 @@ def stage_evaluate(args, clip_extractor=None) -> dict:
 
     import train as resnet_train
     from models.clip_head import build_clip_detector
-    from eval.harness import robustness_eval, write_report
+    from eval.harness import robustness_eval, write_operating_point, write_report
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     report_dir = Path(args.out) / "report"
@@ -510,6 +510,12 @@ def stage_evaluate(args, clip_extractor=None) -> dict:
         in_dist_split="test_indist",
     )
     print(f"[evaluate] wrote report -> {report_path}")
+
+    # Operating point: pick the threshold that meets the real-photo FPR
+    # target on the held-out wild reals, and persist it for the backend.
+    _wild_preds = next(iter(predictions_by_model.values()))
+    op_path = write_operating_point(_wild_preds, report_dir, target_fpr=0.02)
+    print(f"[evaluate] wrote operating point -> {op_path}")
 
     # Persist raw predictions alongside the report for reproducibility.
     for name, preds in predictions_by_model.items():

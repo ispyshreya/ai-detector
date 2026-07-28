@@ -300,6 +300,25 @@ def select_threshold_for_target_fpr(
     return best
 
 
+def write_operating_point(
+    predictions: pd.DataFrame, out_dir, target_fpr: float = 0.02
+) -> Path:
+    """Choose and persist the decision threshold that meets the real-FPR target."""
+    import json
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    threshold = select_threshold_for_target_fpr(predictions, target_fpr=target_fpr)
+    payload = {
+        "threshold": threshold,
+        "target_fpr": float(target_fpr),
+        "real_fpr_at_threshold": real_photo_false_positive_rate(predictions, threshold),
+    }
+    path = out_dir / "operating_point.json"
+    path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
 # --------------------------------------------------------------------------- #
 # 4. Robustness eval (panel 3) — JPEG compression + downscaling
 # --------------------------------------------------------------------------- #

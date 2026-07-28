@@ -271,6 +271,20 @@ def test_report_includes_real_photo_fpr(tmp_path=None):
     assert "real_fpr" in text
 
 
+def test_write_operating_point(tmp_path=None):
+    import json
+    import tempfile
+
+    out_dir = Path(tmp_path) if tmp_path else Path(tempfile.mkdtemp())
+    preds = _synthetic_predictions()
+    path = harness.write_operating_point(preds, out_dir, target_fpr=0.05)
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert set(data) >= {"threshold", "target_fpr", "real_fpr_at_threshold"}
+    assert 0.0 < data["threshold"] < 1.0
+    assert data["real_fpr_at_threshold"] <= 0.05 + 1e-9
+
+
 # --------------------------------------------------------------------------- #
 # Plain runner (no pytest required)
 # --------------------------------------------------------------------------- #
