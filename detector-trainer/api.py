@@ -15,6 +15,7 @@ from train import build_model
 
 IMAGE_SIZE = 224
 THRESHOLD = 0.5
+TRAINING_NATIVE_SIZE = (32, 32)
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 VLM_MODEL_ID = "Qwen/Qwen2.5-VL-3B-Instruct"
 VLM_REVISION = None
@@ -273,6 +274,15 @@ async def predict(media: UploadFile = File(...)):
         image = Image.open(BytesIO(contents)).convert("RGB")
     except UnidentifiedImageError as exc:
         raise HTTPException(status_code=400, detail="Uploaded file is not a valid image.") from exc
+
+    if image.size != TRAINING_NATIVE_SIZE:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This checkpoint was trained on 32x32 CIFAKE images and is not "
+                f"validated for this {image.width}x{image.height} upload."
+            ),
+        )
 
     model = state["model"]
     device = state["device"]

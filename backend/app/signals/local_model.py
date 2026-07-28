@@ -22,6 +22,7 @@ from app.schemas import SignalClass, SignalResult, SignalStatus
 from app.signals.base import ImageInput, Signal
 
 IMAGE_SIZE = 224
+TRAINING_NATIVE_SIZE = (32, 32)
 _MODEL = None
 _DEVICE = None
 _CHECKPOINT = None
@@ -88,6 +89,25 @@ class LocalModelSignal(Signal):
             pil_image = Image.open(BytesIO(image.data)).convert("RGB")
         except UnidentifiedImageError:
             return self._error_result("uploaded file is not a valid image", started)
+
+        if pil_image.size != TRAINING_NATIVE_SIZE:
+            return SignalResult(
+                name=self.name,
+                signal_class=self.signal_class,
+                status=SignalStatus.skipped,
+                latency_ms=(time.perf_counter() - started) * 1000.0,
+                notes=[
+                    "Local checkpoint skipped: its training images were 32x32, "
+                    f"but this upload is {pil_image.width}x{pil_image.height}.",
+                    "The checkpoint is not validated for full-resolution real-world photographs.",
+                ],
+                raw={
+                    "reason": "out_of_training_domain",
+                    "training_native_size": list(TRAINING_NATIVE_SIZE),
+                    "input_size": list(pil_image.size),
+                    "checkpoint": str(_resolve_checkpoint(get_settings().local_model_checkpoint)),
+                },
+            )
 
         try:
             model, device, checkpoint = _load_model()

@@ -4,6 +4,13 @@
     "REAL": 1
   },
   "model_name": "resnet50_dropout",
+  "training_data": {
+    "dataset_family": "CIFAKE",
+    "native_width": 32,
+    "native_height": 32,
+    "production_ready": false,
+    "limitation": "This checkpoint is not validated for full-resolution real-world photographs."
+  },
   "output": {
     "activation": "sigmoid",
     "positive_class": "FAKE",

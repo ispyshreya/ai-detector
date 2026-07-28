@@ -14,6 +14,10 @@ Modern image scams often rely on synthetic profile photos, edited screenshots, f
 
 The application is intended to support human review. It should not be treated as definitive proof that an image is real or fake.
 
+> **Checkpoint limitation:** the currently bundled ResNet checkpoint was
+> trained on 32×32 CIFAKE images. The backend deliberately skips it for
+> full-resolution uploads until a real-world checkpoint replaces it.
+
 ## Key Features
 
 - **Image authenticity scoring**: Upload an image and receive a normalized Veil score.
