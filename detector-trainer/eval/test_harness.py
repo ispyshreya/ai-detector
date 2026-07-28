@@ -244,6 +244,22 @@ def test_real_photo_fpr_no_reals_is_nan():
     assert np.isnan(harness.real_photo_false_positive_rate(preds, 0.5))
 
 
+def test_select_threshold_hits_target_real_fpr():
+    reals = pd.DataFrame(
+        {
+            "path": [f"r{i}" for i in range(100)],
+            "generator": ["real"] * 100,
+            "split": ["test_wild"] * 100,
+            "label": [0] * 100,
+            "score": list(np.linspace(0.0, 1.0, 100)),
+        },
+        columns=harness.PREDICTION_COLUMNS,
+    )
+    t = harness.select_threshold_for_target_fpr(reals, target_fpr=0.05)
+    assert harness.real_photo_false_positive_rate(reals, t) <= 0.05
+    assert 0.9 <= t <= 1.0
+
+
 def test_report_includes_real_photo_fpr(tmp_path=None):
     import tempfile
 

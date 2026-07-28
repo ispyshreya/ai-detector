@@ -278,6 +278,28 @@ def real_photo_specificity(
     return float("nan") if np.isnan(fpr) else 1.0 - fpr
 
 
+def select_threshold_for_target_fpr(
+    predictions: pd.DataFrame,
+    target_fpr: float = 0.02,
+    grid: int = 199,
+) -> float:
+    """Lowest decision threshold whose real-photo FPR is <= `target_fpr`.
+
+    Scans thresholds in (0, 1) low→high and returns the first that keeps real
+    false positives at/below the target. Lower thresholds keep more FAKE recall,
+    so the first qualifying threshold is the best trade. Falls back to the
+    strictest candidate if none meets the target.
+    """
+    _validate_predictions(predictions)
+    candidates = np.linspace(0.005, 0.995, grid)
+    best = float(candidates[-1])
+    for t in candidates:
+        if real_photo_false_positive_rate(predictions, float(t)) <= target_fpr:
+            best = float(t)
+            break
+    return best
+
+
 # --------------------------------------------------------------------------- #
 # 4. Robustness eval (panel 3) — JPEG compression + downscaling
 # --------------------------------------------------------------------------- #
