@@ -82,6 +82,20 @@ kaggle datasets version -p real_world -m "refresh reals" --dir-mode zip  # updat
 `--wild-real-sources real_div2k_heldout` to hold the camera-native proxy out of
 training. **Do not** push `real_world/` inside the code dataset — keep it separate.
 
+### Modern-generator fakes dataset (flux/dalle3)
+The self-generated Flux + DALL·E images (`wild_data/{flux,dalle3}`) push as a
+separate `veil-detector-wild-fakes` dataset:
+```bash
+cd detector-trainer
+# wild_data/dataset-metadata.json sets id -> <USER>/veil-detector-wild-fakes
+kaggle datasets create -p wild_data --dir-mode zip
+```
+By default `WILD_GENERATORS` holds midjourney/dalle3/flux out of training. To
+*train* on flux/dalle3 (closing the modern-generator gap) while keeping
+Midjourney as the honest unseen test, the notebook passes
+`--wild-generators midjourney`. The kernel already lists the dataset in
+`dataset_sources` and the notebook adds it to `--data-root`.
+
 ## Push the kernel and run
 
 ```bash
