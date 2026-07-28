@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
 
 from app.config import get_settings
-from app.explain.vlm import explain_image
+from app.explain.vlm import explain_image, serialize_findings
 from app.schemas import ScanResponse, SignalResult, SignalStatus
 from app.signals.base import ImageInput, Signal
 from app.signals.registry import available_signals
@@ -122,4 +122,6 @@ async def explain(
         "model": result.model,
         "used_fallback": result.used_fallback,
         "note": result.note,
+        "assessment": result.assessment,
+        "findings": serialize_findings(result.findings),
     }

@@ -43,7 +43,9 @@ Veil score + confidence + explanation
 
 The backend runs the local checkpoint and any configured external signals. The
 VLM is loaded lazily on the first explanation request and never changes the
-detector score.
+detector score. Visual inspection is score-blind and uses the complete image
+plus four quadrant views. Only validated, object-specific observations reach
+the UI; malformed or unsupported output becomes an explicit abstention.
 
 ## Repository Structure
 
@@ -131,8 +133,16 @@ Expected response:
 ```json
 {
   "explanation": "- Possible warning sign...",
-  "model": "HuggingFaceTB/SmolVLM-500M-Instruct",
+  "model": "HuggingFaceTB/SmolVLM2-2.2B-Instruct",
   "used_fallback": false,
+  "assessment": "specific_artifacts_found",
+  "findings": [
+    {
+      "region": "store sign in upper-left",
+      "observation": "several letters have inconsistent strokes",
+      "confidence": "medium"
+    }
+  ],
   "note": "Visual explanations are AI-generated and should be treated as possible warning signs, not proof."
 }
 ```
