@@ -212,6 +212,39 @@ def test_write_report_creates_markdown_and_plots(tmp_path=None):
 
 
 # --------------------------------------------------------------------------- #
+# Real-photo false-positive metrics
+# --------------------------------------------------------------------------- #
+def test_real_photo_fpr_and_specificity():
+    preds = pd.DataFrame(
+        {
+            "path": [f"p{i}" for i in range(6)],
+            "generator": ["real"] * 4 + ["flux", "flux"],
+            "split": ["test_wild"] * 6,
+            "label": [0, 0, 0, 0, 1, 1],
+            # 2 of 4 reals wrongly scored >= 0.5
+            "score": [0.1, 0.2, 0.8, 0.9, 0.7, 0.9],
+        },
+        columns=harness.PREDICTION_COLUMNS,
+    )
+    assert harness.real_photo_false_positive_rate(preds, 0.5) == 0.5
+    assert harness.real_photo_specificity(preds, 0.5) == 0.5
+
+
+def test_real_photo_fpr_no_reals_is_nan():
+    preds = pd.DataFrame(
+        {
+            "path": ["a"],
+            "generator": ["flux"],
+            "split": ["test_wild"],
+            "label": [1],
+            "score": [0.9],
+        },
+        columns=harness.PREDICTION_COLUMNS,
+    )
+    assert np.isnan(harness.real_photo_false_positive_rate(preds, 0.5))
+
+
+# --------------------------------------------------------------------------- #
 # Plain runner (no pytest required)
 # --------------------------------------------------------------------------- #
 def _run_all():

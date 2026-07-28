@@ -253,6 +253,31 @@ def _validate_predictions(predictions: pd.DataFrame) -> None:
         raise ValueError(f"predictions missing columns: {missing}")
 
 
+def real_photo_false_positive_rate(
+    predictions: pd.DataFrame, threshold: float = DEFAULT_THRESHOLD
+) -> float:
+    """Fraction of REAL images wrongly scored FAKE (score >= threshold).
+
+    The headline number for the real-photo false-positive bug: genuine selfies
+    and phone photos that the detector flags as AI-generated. NaN if there are
+    no real images in `predictions`.
+    """
+    _validate_predictions(predictions)
+    reals = predictions[predictions["label"] == 0]
+    if len(reals) == 0:
+        return float("nan")
+    fp = int((reals["score"] >= threshold).sum())
+    return float(fp / len(reals))
+
+
+def real_photo_specificity(
+    predictions: pd.DataFrame, threshold: float = DEFAULT_THRESHOLD
+) -> float:
+    """Fraction of REAL images correctly scored REAL (score < threshold). NaN if none."""
+    fpr = real_photo_false_positive_rate(predictions, threshold)
+    return float("nan") if np.isnan(fpr) else 1.0 - fpr
+
+
 # --------------------------------------------------------------------------- #
 # 4. Robustness eval (panel 3) — JPEG compression + downscaling
 # --------------------------------------------------------------------------- #
