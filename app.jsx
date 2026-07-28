@@ -146,7 +146,10 @@ const buildComparison = (detectors) => {
     usableScores.length > 1
       ? Math.max(...usableScores) - Math.min(...usableScores)
       : 0.3;
-  const inconclusive = usableScores.length < 2 || disagreement >= 0.5;
+  // A single trusted detector (the in-house model) still yields a verdict; we
+  // only fall back to "inconclusive" when 2+ detectors genuinely disagree.
+  // Single-source results are surfaced with an "uncorroborated" caveat below.
+  const inconclusive = usableScores.length >= 2 && disagreement >= 0.5;
   const agreementStrength = 1 - disagreement;
   const certainty = Math.abs(overallScore - 0.5) * 2;
   const confidence =
@@ -184,7 +187,7 @@ const buildComparison = (detectors) => {
 
   if (usableScores.length < 2) {
     userSummary.push("Only one AI detector returned a score, so Veil cannot corroborate the result.");
-    userSummary.push("Treat this scan as inconclusive even if the available detector is highly certain.");
+    userSummary.push("This is the in-house model's verdict from a single source — treat it as a lead to verify, not final proof.");
     userSummary.push("A model can be confidently wrong on images unlike its training data.");
     visualChecks.push("The visual explainer did not identify a specific artifact that confirms the detector result.");
     visualChecks.push("Check the original source, capture context, and metadata instead of relying on this score alone.");
