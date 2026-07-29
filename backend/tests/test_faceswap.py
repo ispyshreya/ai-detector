@@ -71,3 +71,15 @@ async def test_loader_failure_is_reported_not_raised(monkeypatch):
     result = await fs.FaceSwapSignal().analyze(_img())
     assert result.status.value == "error"
     assert "model download failed" in (result.error or "")
+
+
+async def test_classifier_failure_is_reported_not_raised(monkeypatch):
+    monkeypatch.setattr(fs, "get_settings", lambda: _settings())
+    monkeypatch.setattr(fs, "_MODEL", None)
+    monkeypatch.setattr(fs, "_load_face_detector", lambda: (lambda pil: [Image.new("RGB", (32, 32))]))
+    def classifier_boom(crop):
+        raise RuntimeError("classify boom")
+    monkeypatch.setattr(fs, "_load_classifier", lambda: classifier_boom)
+    result = await fs.FaceSwapSignal().analyze(_img())
+    assert result.status.value == "error"
+    assert "classify boom" in (result.error or "")
