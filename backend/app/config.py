@@ -58,8 +58,10 @@ class Settings(BaseSettings):
 
     # --- Face-swap / deepfake-face signal ---
     faceswap_enabled: bool = True
-    faceswap_model_id: str = "dima806/deepfake_vs_real_image_detection"
-    faceswap_threshold: float = 0.7  # conservative; tuned by the acceptance gate
+    faceswap_model_id: str = "prithivMLmods/Deep-Fake-Detector-v2-Model"
+    faceswap_threshold: float = 0.80  # locked by the acceptance gate (2026-07-29):
+    # catches the Curry composite (0.873) while all reference genuine faces stay
+    # below (max 0.744, the driver's-license photo). Thin margin on documents.
 
     # --- Behavior ---
     signal_timeout_seconds: float = 6.0  # per-signal cap; supports p95 < 6s goal

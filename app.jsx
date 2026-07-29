@@ -134,8 +134,8 @@ const buildComparison = (detectors) => {
     : null;
 
   const faceSwapScore = detectors.faceswap?.deepfake ?? null;   // manipulation_score
-  // Keep FACE_SWAP_THRESHOLD in sync with backend faceswap_threshold default (signals/faceswap.py).
-  const FACE_SWAP_THRESHOLD = 0.7;
+  // Keep FACE_SWAP_THRESHOLD in sync with backend faceswap_threshold (config.py, locked by the acceptance gate).
+  const FACE_SWAP_THRESHOLD = 0.80;
   const faceManipulation = faceSwapScore != null && faceSwapScore >= FACE_SWAP_THRESHOLD;
 
   if (usableScores.length === 0) {
