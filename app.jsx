@@ -100,6 +100,7 @@ const mapEnvelope = (envelope) => {
     local: toDetector(find("local")),
     sightengine: toDetector(find("sightengine")),
     hive: toDetector(find("hive")),
+    faceswap: toDetector(find("faceswap")),
   };
 };
 
@@ -131,6 +132,11 @@ const buildComparison = (detectors) => {
   const deepfakeScore = manipulationScores.length
     ? Math.max(...manipulationScores)
     : null;
+
+  const faceSwapScore = detectors.faceswap?.deepfake ?? null;   // manipulation_score
+  // Keep FACE_SWAP_THRESHOLD in sync with backend faceswap_threshold default (signals/faceswap.py).
+  const FACE_SWAP_THRESHOLD = 0.7;
+  const faceManipulation = faceSwapScore != null && faceSwapScore >= FACE_SWAP_THRESHOLD;
 
   if (usableScores.length === 0) {
     return {
@@ -230,8 +236,18 @@ const buildComparison = (detectors) => {
     }
   }
 
+  if (faceManipulation) {
+    userSummary.unshift(
+      "Possible face manipulation detected — the face may be swapped or composited. Verify the source."
+    );
+  }
+  // Raise the effective score to at least "Needs review" (>=0.4) when face manipulation is confident.
+  const effectiveScore = faceManipulation
+    ? Math.max(overallScore ?? 0, 0.6)   // >=0.4 => "Needs review" per verdictLabel
+    : overallScore;
+
   return {
-    overallScore,
+    overallScore: effectiveScore,
     confidence,
     inconclusive,
     disagreement,
@@ -258,6 +274,7 @@ const buildComparison = (detectors) => {
       sightengine: detectorScores.find(([name]) => name === "sightengine")?.[1] ?? null,
       hive: detectorScores.find(([name]) => name === "hive")?.[1] ?? null,
       deepfake: deepfakeScore,
+      faceswap: faceSwapScore,
     },
   };
 };
