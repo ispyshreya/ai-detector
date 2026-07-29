@@ -2,6 +2,20 @@
 
 Wraps Shreya's ResNet checkpoint as a backend signal so the frontend can call
 one `/scan` endpoint while still using the in-house model.
+
+The checkpoint was trained only on CIFAKE, whose images are natively 32x32.
+For any upload that isn't already 32x32 (i.e. almost every real-world photo),
+we downsample to 32x32 before running inference, so the model sees roughly
+the same level of fine detail it was trained on rather than a much sharper,
+out-of-distribution image. This is a heuristic domain-matching trick, NOT a
+validated technique — downsampling a 4000px camera photo introduces different
+blur/aliasing than however CIFAKE's own 32x32 images were produced, so we
+don't actually know this is well-calibrated (see the Quality Standard section
+of VEIL_CLIENT_PROMPT.md: resizes are one of the transformations a detector
+must be evaluated against before its probability is presented as meaningful —
+that evaluation hasn't been done for this path yet). We flag it in `notes`
+and knock down self-reported `confidence` accordingly so downstream fusion
+(engine/triangulate.py) leans on it less than a native-resolution result.
 """
 
 from __future__ import annotations
@@ -23,6 +37,10 @@ from app.signals.base import ImageInput, Signal
 
 IMAGE_SIZE = 224
 TRAINING_NATIVE_SIZE = (32, 32)
+# Extra confidence discount applied when we had to downsample the input to
+# reach TRAINING_NATIVE_SIZE, on top of the triangulation engine's own
+# blanket discount for this signal (see engine/triangulate.py).
+_RESIZE_CONFIDENCE_FACTOR = 0.7
 _MODEL = None
 _DEVICE = None
 _CHECKPOINT = None
@@ -90,24 +108,10 @@ class LocalModelSignal(Signal):
         except UnidentifiedImageError:
             return self._error_result("uploaded file is not a valid image", started)
 
-        if pil_image.size != TRAINING_NATIVE_SIZE:
-            return SignalResult(
-                name=self.name,
-                signal_class=self.signal_class,
-                status=SignalStatus.skipped,
-                latency_ms=(time.perf_counter() - started) * 1000.0,
-                notes=[
-                    "Local checkpoint skipped: its training images were 32x32, "
-                    f"but this upload is {pil_image.width}x{pil_image.height}.",
-                    "The checkpoint is not validated for full-resolution real-world photographs.",
-                ],
-                raw={
-                    "reason": "out_of_training_domain",
-                    "training_native_size": list(TRAINING_NATIVE_SIZE),
-                    "input_size": list(pil_image.size),
-                    "checkpoint": str(_resolve_checkpoint(get_settings().local_model_checkpoint)),
-                },
-            )
+        original_size = pil_image.size
+        was_resized = original_size != TRAINING_NATIVE_SIZE
+        if was_resized:
+            pil_image = pil_image.resize(TRAINING_NATIVE_SIZE, Image.Resampling.LANCZOS)
 
         try:
             model, device, checkpoint = _load_model()
@@ -119,7 +123,21 @@ class LocalModelSignal(Signal):
             ai_score = torch.sigmoid(model(tensor)).item()
 
         confidence = ai_score if ai_score >= 0.5 else 1.0 - ai_score
+        if was_resized:
+            confidence *= _RESIZE_CONFIDENCE_FACTOR
         latency_ms = (time.perf_counter() - started) * 1000.0
+
+        notes = [
+            f"Local {get_settings().local_model_name} fake/AI likelihood {round(ai_score * 100)}%",
+            f"Checkpoint: {checkpoint}",
+        ]
+        if was_resized:
+            notes.append(
+                f"Input was {original_size[0]}x{original_size[1]}, downsampled to "
+                f"{TRAINING_NATIVE_SIZE[0]}x{TRAINING_NATIVE_SIZE[1]} to match the checkpoint's "
+                "CIFAKE training resolution. This is an unvalidated domain-matching heuristic, "
+                "not a calibrated result — confidence is reduced accordingly."
+            )
 
         return SignalResult(
             name=self.name,
@@ -129,11 +147,14 @@ class LocalModelSignal(Signal):
             manipulation_score=None,
             confidence=max(0.0, min(1.0, float(confidence))),
             latency_ms=latency_ms,
-            notes=[
-                f"Local {get_settings().local_model_name} fake/AI likelihood {round(ai_score * 100)}%",
-                f"Checkpoint: {checkpoint}",
-            ],
-            raw={"checkpoint": str(checkpoint), "model": get_settings().local_model_name},
+            notes=notes,
+            raw={
+                "checkpoint": str(checkpoint),
+                "model": get_settings().local_model_name,
+                "was_resized": was_resized,
+                "original_size": list(original_size),
+                "training_native_size": list(TRAINING_NATIVE_SIZE),
+            },
         )
 
     def _error_result(self, error: str, started: float) -> SignalResult:

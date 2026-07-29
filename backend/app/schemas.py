@@ -57,6 +57,7 @@ class Aggregate(BaseModel):
     confidence: float | None = None
     disagreement: float | None = None          # spread across signals
     contributions: dict[str, float] = Field(default_factory=dict)
+    reasons: list[str] = Field(default_factory=list)  # plain-language rationale, most important first
 
 
 class ScanResponse(BaseModel):

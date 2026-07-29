@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
 
 from app.config import get_settings
+from app.engine.triangulate import triangulate
 from app.explain.vlm import explain_image, serialize_findings
 from app.schemas import ScanResponse, SignalResult, SignalStatus
 from app.signals.base import ImageInput, Signal
@@ -83,10 +84,7 @@ async def scan(media: UploadFile = File(...)) -> ScanResponse:
         filename=image.filename,
         signals=list(results),
     )
-
-    # --- Layer 2 hook: triangulation engine fills response.aggregate ---
-    # from app.engine.triangulate import triangulate
-    # response.aggregate = triangulate(response.signals)
+    response.aggregate = triangulate(response.signals)
 
     # --- Layer 3 hook: LLM explanation fills response.explanation ---
     # from app.explain.llm import explain
@@ -111,8 +109,8 @@ async def explain(
         raise HTTPException(400, "Uploaded file is not a valid image.") from exc
 
     try:
-        result = await asyncio.to_thread(explain_image, image, veil_score)
-    except Exception as exc:  # lazy model download/load failures are recoverable
+        result = await explain_image(image, veil_score)
+    except Exception as exc:  # Hive request/config failures are recoverable
         raise HTTPException(
             503, f"Visual explanation model is unavailable: {exc}"
         ) from exc

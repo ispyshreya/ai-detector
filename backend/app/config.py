@@ -29,10 +29,13 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("SIGHTENGINE_API_SECRET", "VITE_SIGHTENGINE_API_SECRET"),
     )
+    # `hive_api_key` is the V3 Playground Secret Key (self-serve accounts only
+    # get V3; V2 Enterprise requires a sales-provisioned project). See
+    # signals/hive.py for why this must NOT point at the v2 task endpoint.
     hive_api_key: str | None = None
-    hive_access_key: str | None = None
-    hive_secret_key: str | None = None
-    hive_api_url: str = "https://api.thehive.ai/api/v2/task/sync"
+    hive_access_key: str | None = None  # unused: V3 auth needs only the secret key
+    hive_secret_key: str | None = None  # unused: kept for reference/future V2 upgrade
+    hive_api_url: str = "https://api.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection"
     illuminarty_api_key: str | None = None
     ai_or_not_api_key: str | None = None
 
@@ -46,7 +49,7 @@ class Settings(BaseSettings):
     # --- LLM explanation layer (Layer 3) ---
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-opus-4-8"
-    vlm_model_id: str = "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+    vlm_model_id: str = "hive/vision-language-model"
     vlm_max_new_tokens: int = 220
 
     # --- Behavior ---

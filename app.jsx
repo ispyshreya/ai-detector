@@ -7,36 +7,40 @@ const ENV = import.meta.env;
 // frontend at the backend with VITE_VEIL_API_URL (defaults to local dev).
 const API_BASE = (ENV.VITE_VEIL_API_URL || "http://127.0.0.1:8000").replace(/\/+$/, "");
 
+const ICONS = {
+  dashboard: <path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6V11h-6v9Zm0-16v5h6V4h-6Z" />,
+  upload: <path d="M12 4v11m0-11 4 4m-4-4-4 4M5 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />,
+  history: <path d="M4 12a8 8 0 1 1 3 6.24M4 12V7m0 5H9m3-4v4l3 2" />,
+  settings: <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8-3.5a7.9 7.9 0 0 0-.14-1.47l1.9-1.48-2-3.46-2.25.9a8 8 0 0 0-2.55-1.48L14.6 3h-4l-.36 2.5a8 8 0 0 0-2.55 1.48l-2.25-.9-2 3.46 1.9 1.48A7.9 7.9 0 0 0 4 12c0 .5.05 1 .14 1.47l-1.9 1.48 2 3.46 2.25-.9a8 8 0 0 0 2.55 1.48L9.4 21h4l.36-2.5a8 8 0 0 0 2.55-1.48l2.25.9 2-3.46-1.9-1.48c.09-.48.14-.97.14-1.48Z" />,
+  sun: <path d="M12 4V2m0 20v-2M4 12H2m20 0h-2M5.6 5.6 4.2 4.2m15.6 1.4 1.4-1.4M5.6 18.4l-1.4 1.4m15.6-1.4 1.4 1.4M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z" />,
+  moon: <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z" />,
+};
+
+const Icon = ({ name }) => (
+  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    {ICONS[name]}
+  </svg>
+);
+
 const navItems = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "upload", label: "Check Image" },
-  { id: "history", label: "History" },
-  { id: "settings", label: "Settings" },
+  { id: "dashboard", label: "Dashboard", icon: "dashboard" },
+  { id: "upload", label: "Check Image", icon: "upload" },
+  { id: "history", label: "History", icon: "history" },
+  { id: "settings", label: "Settings", icon: "settings" },
 ];
 
-const clampScore = (score) => {
-  if (!Number.isFinite(score)) return null;
-  return Math.max(0, Math.min(1, score));
+// The backend's triangulation engine (app/engine/triangulate.py) is the single
+// source of truth for the verdict, fused score, and confidence — the frontend
+// no longer recomputes any of this. These five labels are its full vocabulary.
+const VERDICT_STYLE = {
+  "Likely Authentic": { type: "low" },
+  "Low Risk": { type: "low" },
+  "Medium Risk": { type: "medium" },
+  "High Risk": { type: "high" },
+  Inconclusive: { type: "unknown" },
 };
 
-const riskLabel = (score) => {
-  if (score === null || score === undefined) return { text: "Unavailable", type: "unknown" };
-  if (score < 0.4) return { text: "Low Risk", type: "low" };
-  if (score < 0.7) return { text: "Medium Risk", type: "medium" };
-  return { text: "High Risk", type: "high" };
-};
-
-const verdictLabel = (score) => {
-  if (score === null || score === undefined) return "Inconclusive";
-  return score >= 0.7 ? "High scam risk" : score >= 0.4 ? "Needs review" : "Looks authentic";
-};
-
-const scoreCaption = (score) => {
-  if (score === null || score === undefined) return "inconclusive";
-  if (score >= 0.7) return "likely false";
-  if (score >= 0.4) return "needs review";
-  return "likely authentic";
-};
+const verdictStyle = (verdict) => VERDICT_STYLE[verdict] ?? VERDICT_STYLE.Inconclusive;
 
 const formatPercent = (score) => {
   if (score === null || score === undefined) return "N/A";
@@ -51,7 +55,8 @@ const formatBullets = (text) => {
     .filter(Boolean);
 };
 
-// POST the image to the Veil backend and return the raw ScanResponse envelope.
+// POST the image to the Veil backend and return the raw ScanResponse envelope,
+// including the backend-computed `aggregate` (verdict/score/confidence/reasons).
 const runScan = async (file) => {
   const formData = new FormData();
   formData.append("media", file, file.name);
@@ -79,30 +84,6 @@ const runScan = async (file) => {
   return envelope;
 };
 
-// Translate the backend's signal envelope into the per-detector shape the UI
-// already understands. Sightengine's ai_score -> genai, manipulation -> deepfake.
-const mapEnvelope = (envelope) => {
-  const signals = envelope?.signals ?? [];
-  const find = (name) => signals.find((signal) => signal.name === name) ?? null;
-
-  const toDetector = (signal) =>
-    signal
-      ? {
-          genai: signal.ai_score,
-          deepfake: signal.manipulation_score,
-          status: signal.status,
-          error: signal.error,
-          raw: signal.raw,
-        }
-      : null;
-
-  return {
-    local: toDetector(find("local")),
-    sightengine: toDetector(find("sightengine")),
-    hive: toDetector(find("hive")),
-  };
-};
-
 const runVisualExplanation = async (file, score) => {
   const formData = new FormData();
   formData.append("media", file, file.name);
@@ -116,155 +97,125 @@ const runVisualExplanation = async (file, score) => {
   return body;
 };
 
-const buildComparison = (detectors) => {
-  const detectorScores = [
-    ["local", detectors.local?.genai ?? null],
-    ["sightengine", detectors.sightengine?.genai ?? null],
-    ["hive", detectors.hive?.genai ?? null],
-  ];
-  const usableEntries = detectorScores.filter(([, score]) => score != null);
-  const usableScores = usableEntries.map(([, score]) => score);
-  const usableNames = new Set(usableEntries.map(([name]) => name));
-  const hasExternalDetector = usableNames.has("sightengine") || usableNames.has("hive");
-  const manipulationScores = [
-    detectors.sightengine?.deepfake ?? null,
-    detectors.hive?.deepfake ?? null,
-  ].filter((score) => score != null);
-  const deepfakeScore = manipulationScores.length
-    ? Math.max(...manipulationScores)
-    : null;
+// Groups raw envelope.signals for the "Additional info" panel: people who
+// care can see exactly what the local detector, metadata/forensic checks, and
+// external APIs each reported, without that detail crowding the headline.
+const SIGNAL_CATEGORY = {
+  exif: "metadata",
+  ela: "metadata",
+  c2pa: "metadata",
+  local: "local",
+  sightengine: "api",
+  hive: "api",
+  reverse_search: "api",
+};
 
-  if (usableScores.length === 0) {
-    return {
-      overallScore: null,
-      confidence: null,
-      agreement: "No detector scores available",
-      explanation: ["Neither detector returned a usable AI-generation score."],
-    };
+const CATEGORY_LABEL = {
+  local: "Local AI Detector",
+  metadata: "Metadata & Forensics",
+  api: "External APIs",
+};
+
+const CATEGORY_ORDER = ["local", "metadata", "api"];
+
+const groupSignals = (signals) => {
+  const groups = { local: [], metadata: [], api: [] };
+  for (const signal of signals ?? []) {
+    const category =
+      SIGNAL_CATEGORY[signal.name] ?? (signal.signal_class === "context" ? "api" : "metadata");
+    groups[category].push(signal);
   }
+  return groups;
+};
 
-  const overallScore = usableScores.reduce((sum, score) => sum + score, 0) / usableScores.length;
-  const disagreement =
-    usableScores.length > 1
-      ? Math.max(...usableScores) - Math.min(...usableScores)
-      : 0.3;
-  const inconclusive =
-    usableScores.length === 0 ||
-    (usableScores.length === 1 && !hasExternalDetector) ||
-    (usableScores.length > 1 && disagreement >= 0.5);
-  const agreementStrength = 1 - disagreement;
-  const certainty = Math.abs(overallScore - 0.5) * 2;
-  const confidence =
-    usableScores.length === 1
-      ? hasExternalDetector
-        ? clampScore(0.5 + certainty * 0.25)
-        : clampScore(0.2 + certainty * 0.2)
-      : clampScore(0.25 + agreementStrength * 0.45 + certainty * 0.3);
+// Detection-ratio style summary (VirusTotal-style "N/M flagged"): a quick
+// scan of which independent checks actually fired a risk signal, shown up
+// front rather than buried in the collapsed technical detail.
+const FLAG_THRESHOLD = 0.5;
 
-  const explanation = [];
-  const visualChecks = [];
+const signalTone = (signal) => {
+  if (signal.status !== "ok") return "neutral";
+  const score = signal.ai_score ?? signal.manipulation_score;
+  if (score == null) return "neutral";
+  return score >= FLAG_THRESHOLD ? "flag" : "clear";
+};
+
+const signalChipValue = (signal) => {
+  if (signal.status === "error") return "Error";
+  if (signal.status === "unavailable") return "N/A";
+  if (signal.status === "skipped") return "Skipped";
+  const score = signal.ai_score ?? signal.manipulation_score;
+  return score != null ? formatPercent(score) : "—";
+};
+
+const detectionRatio = (signals) => {
+  const scored = (signals ?? []).filter(
+    (s) => s.status === "ok" && (s.ai_score != null || s.manipulation_score != null)
+  );
+  const flagged = scored.filter((s) => (s.ai_score ?? s.manipulation_score) >= FLAG_THRESHOLD);
+  return { flagged: flagged.length, total: scored.length };
+};
+
+// Practical guidance text, keyed off the backend's verdict band. This is
+// UX copy (how to act), not evidence — the evidence itself (aggregate.reasons,
+// per-signal notes) comes straight from the backend so it can't drift from it.
+const buildGuidance = (aggregate) => {
+  const verdict = aggregate?.verdict ?? "Inconclusive";
+  const manipulationScore = aggregate?.manipulation_score ?? null;
   const userSummary = [];
+  const visualChecks = [];
   const nextSteps = [];
-  if (usableScores.length > 1) {
-    if (inconclusive) {
-      explanation.push("Veil's authenticity checks strongly contradicted one another.");
-      explanation.push("The combined percentage is only a midpoint between opposing results, not evidence that the image is 50% fake.");
-      explanation.push("Treat this scan as inconclusive and verify the image through its source or context.");
-    } else {
-      explanation.push(
-        overallScore >= 0.7
-          ? "Veil found an authenticity warning in the image."
-          : overallScore < 0.4
-            ? "Veil's checks found low AI-generation risk."
-            : "Veil found mixed authenticity signals."
-      );
-      explanation.push(
-        disagreement < 0.15
-          ? "The checks returned closely aligned scores."
-          : "The checks differed somewhat, so Veil is treating the result with caution."
-      );
-    }
-  } else {
-    const onlyDetector = usableEntries[0]?.[0] ?? "one detector";
-    explanation.push(`Veil completed one authenticity check (${onlyDetector}), but other checks were unavailable.`);
-  }
 
-  if (usableScores.length < 2 && !hasExternalDetector) {
-    userSummary.push("Only one AI detector returned a score, so Veil cannot corroborate the result.");
-    userSummary.push("Treat this scan as inconclusive even if the available detector is highly certain.");
-    userSummary.push("A model can be confidently wrong on images unlike its training data.");
-    visualChecks.push("The visual explainer did not identify a specific artifact that confirms the detector result.");
+  if (verdict === "Inconclusive") {
+    userSummary.push("Veil could not reach a confident verdict from the available evidence.");
+    userSummary.push("Treat this scan as unresolved, not as proof the image is real or fake.");
+    (aggregate?.reasons ?? []).slice(0, 2).forEach((reason) => userSummary.push(reason));
     visualChecks.push("Check the original source, capture context, and metadata instead of relying on this score alone.");
-    nextSteps.push("Retry the external detectors or verify that their credentials and quotas are available.");
-    nextSteps.push("Use reverse-image search or another independent authenticity service before acting.");
-  } else if (overallScore >= 0.7) {
+    nextSteps.push("Retry with a higher-resolution image, or verify through an independent channel.");
+    nextSteps.push("Use reverse-image search or another authenticity service before acting.");
+  } else if (verdict === "High Risk") {
     userSummary.push("This image should not be trusted on its own.");
     userSummary.push("It may be AI-generated, edited, or used out of context.");
     userSummary.push("If someone is using this image to ask for money, identity documents, login codes, crypto, gift cards, or urgent action, treat it as suspicious.");
     visualChecks.push("Look closely at hands, fingers, ears, teeth, jewelry, glasses, and reflections.");
     visualChecks.push("Check text, signs, logos, watermarks, labels, and screenshots for warped letters or nonsense words.");
-    visualChecks.push("Watch for overly smooth skin, strange lighting, repeated textures, or background objects that do not make sense.");
     nextSteps.push("Do not send money or personal information based only on this image.");
     nextSteps.push("Ask for a live video call, a new photo with a specific gesture, or another independent proof.");
     nextSteps.push("Reverse-image search the picture and verify the account or sender through a separate channel.");
-  } else if (overallScore >= 0.4) {
+  } else if (verdict === "Medium Risk") {
     userSummary.push("Veil found mixed signals. The image might be authentic, edited, or AI-assisted.");
     userSummary.push("Use caution if the image is connected to money, dating, identity, news, or an urgent request.");
     visualChecks.push("Inspect hands, text, logos, reflections, face edges, and background details.");
-    visualChecks.push("Screenshots, filters, heavy compression, or stylized art can make image checks less certain.");
     nextSteps.push("Ask for another proof before trusting the image.");
     nextSteps.push("Check the source, date, and context of the image.");
   } else {
-    userSummary.push("Veil did not find strong signs that this image is AI-generated.");
+    userSummary.push(
+      verdict === "Likely Authentic"
+        ? "Veil's checks agree this image is very likely an authentic, unedited capture."
+        : "Veil did not find strong signs that this image is AI-generated."
+    );
     userSummary.push("This lowers the risk, but it does not prove the sender, story, or context is truthful.");
     visualChecks.push("For high-stakes situations, still check hands, text, faces, shadows, reflections, and image source.");
     nextSteps.push("If money, credentials, or identity are involved, verify through another trusted channel.");
   }
 
-  if (deepfakeScore != null) {
-    explanation.push(
-      deepfakeScore >= 0.7
-        ? "Veil also found a strong warning for possible face manipulation."
-        : "Veil did not find a strong face-manipulation warning."
-    );
-    if (deepfakeScore >= 0.7) {
-      userSummary.push("If the image includes a person, the face may have been altered or generated.");
-      visualChecks.push("For faces, inspect eye alignment, skin transitions, hairlines, earrings, teeth, and face edges.");
-      nextSteps.push("Do not rely on a face image alone to confirm someone's identity.");
-    }
+  if (manipulationScore != null && manipulationScore >= 0.5) {
+    userSummary.push("Independent evidence also suggests possible editing or manipulation, separate from AI-generation risk.");
+    visualChecks.push("For faces, inspect eye alignment, skin transitions, hairlines, earrings, teeth, and face edges.");
+    nextSteps.push("Do not rely on a face image alone to confirm someone's identity.");
   }
 
-  return {
-    overallScore,
-    confidence,
-    inconclusive,
-    provisional: usableScores.length === 1 && hasExternalDetector,
-    disagreement,
-    agreement:
-      usableScores.length === 2
-        ? disagreement < 0.15
-          ? "Strong agreement"
-          : disagreement < 0.35
-            ? "Partial agreement"
-            : "Low agreement"
-        : usableScores.length > 2
-          ? disagreement < 0.15
-            ? "Strong agreement"
-            : disagreement < 0.35
-              ? "Partial agreement"
-              : "Low agreement"
-        : "Single-detector result",
-    explanation,
-    visualChecks,
-    userSummary,
-    nextSteps,
-    rawScores: {
-      local: detectorScores.find(([name]) => name === "local")?.[1] ?? null,
-      sightengine: detectorScores.find(([name]) => name === "sightengine")?.[1] ?? null,
-      hive: detectorScores.find(([name]) => name === "hive")?.[1] ?? null,
-      deepfake: deepfakeScore,
-    },
-  };
+  return { userSummary, visualChecks, nextSteps };
+};
+
+const getPreferredColorScheme = () => {
+  try {
+    const stored = window.localStorage.getItem("veil-color-scheme");
+    if (stored === "light" || stored === "dark") return stored;
+  } catch {
+    /* localStorage unavailable (private mode, etc.) — fall through */
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 };
 
 function App() {
@@ -278,22 +229,29 @@ function App() {
   const [error, setError] = useState(null);
   const [history, setHistory] = useState([]);
   const [settingsTab, setSettingsTab] = useState("overview");
-  const [themeMode, setThemeMode] = useState("midnight");
   const [motionMode, setMotionMode] = useState("on");
+  const [colorScheme, setColorScheme] = useState(getPreferredColorScheme);
   const [backendStatus, setBackendStatus] = useState(null);
 
-  const overallScore = scan?.comparison?.overallScore ?? null;
-  const confidenceScore = scan?.comparison?.confidence ?? null;
-  const resultRisk = useMemo(
-    () => scan?.comparison?.inconclusive
-      ? { text: "Inconclusive", type: "unknown" }
-      : riskLabel(overallScore),
-    [overallScore, scan?.comparison?.inconclusive]
-  );
+  const aggregate = scan?.aggregate ?? null;
+  const overallScore = aggregate?.ai_score ?? null;
+  const manipulationScore = aggregate?.manipulation_score ?? null;
+  const verdict = aggregate?.verdict ?? null;
+  const style = verdictStyle(verdict ?? "Inconclusive");
+  const guidance = useMemo(() => (aggregate ? buildGuidance(aggregate) : null), [aggregate]);
   const visualBullets = useMemo(
     () => formatBullets(visualExplanation?.explanation),
     [visualExplanation]
   );
+  const ratio = useMemo(() => detectionRatio(scan?.envelope?.signals), [scan]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("veil-color-scheme", colorScheme);
+    } catch {
+      /* ignore persistence failures */
+    }
+  }, [colorScheme]);
 
   // Probe the backend on load so a tester can see which signals are configured
   // (e.g. whether Sightengine keys are present server-side) without scanning.
@@ -357,45 +315,43 @@ function App() {
 
     try {
       const envelope = await runScan(file);
-      const detectors = mapEnvelope(envelope);
+      const scanAggregate = envelope.aggregate ?? {};
 
-      const comparison = buildComparison(detectors);
-      if (comparison.overallScore == null) {
-        const failedSignal = Object.entries(detectors).find(([, signal]) => signal?.status === "error");
+      if (scanAggregate.ai_score == null && scanAggregate.manipulation_score == null) {
+        const failedSignal = (envelope.signals ?? []).find((signal) => signal.status === "error");
         setError(
           failedSignal
-            ? `No detector score is available. ${failedSignal[0]}: ${failedSignal[1].error}`
+            ? `No usable evidence. ${failedSignal.name}: ${failedSignal.error}`
             : "No detector returned a usable score."
         );
       }
-      const nextScan = { ...detectors, comparison, envelope };
 
+      const nextScan = {
+        envelope,
+        aggregate: scanAggregate,
+        groups: groupSignals(envelope.signals),
+      };
       setScan(nextScan);
       setHistory((current) => [
         {
           filename: file.name,
           date: new Date().toLocaleString(),
-          score: formatPercent(comparison.overallScore),
-          verdict: comparison.inconclusive ? "Inconclusive" : verdictLabel(comparison.overallScore),
-          confidence: formatPercent(comparison.confidence),
+          score: formatPercent(scanAggregate.ai_score),
+          verdict: scanAggregate.verdict ?? "Inconclusive",
         },
         ...current,
       ]);
       setActivePage("dashboard");
 
       // Layer 3 (LLM) explanation arrives on the envelope once the backend
-      // builds it. Until then the guidance below is generated client-side.
+      // builds it. Until then the VLM is called directly from here.
       if (envelope.explanation) {
         setVisualExplanation({ explanation: envelope.explanation });
       } else {
         setExplaining(true);
         try {
-          setVisualExplanation(
-            await runVisualExplanation(
-              file,
-              comparison.inconclusive ? null : comparison.overallScore
-            )
-          );
+          const scoreForVlm = scanAggregate.verdict !== "Inconclusive" ? scanAggregate.ai_score : null;
+          setVisualExplanation(await runVisualExplanation(file, scoreForVlm));
         } catch (explanationError) {
           setVisualExplanation({ error: explanationError.message });
         } finally {
@@ -410,8 +366,8 @@ function App() {
   };
 
   return (
-    <div className={`veil-app theme-${themeMode} motion-${motionMode}`}>
-      <header className="topbar">
+    <div className={`veil-app theme-${colorScheme} motion-${motionMode}`}>
+      <aside className="sidebar">
         <div className="brand-block">
           <div className="brand-icon">V</div>
           <div>
@@ -427,30 +383,39 @@ function App() {
               key={item.id}
               onClick={() => navigate(item.id)}
             >
+              <Icon name={item.icon} />
               {item.label}
             </button>
           ))}
         </nav>
 
-        <div className="topbar-status">
-          <span className={`status-dot ${loading ? "busy" : ""}`}></span>
-          <div>
-            <strong>{loading ? "Scanning" : "Ready"}</strong>
-          <span>Authenticity services enabled</span>
+        <div className="sidebar-footer">
+          <div className="status-card">
+            <span className={`status-dot ${loading ? "busy" : ""}`}></span>
+            <div>
+              <strong>{loading ? "Scanning" : "Ready"}</strong>
+              <span>Authenticity services enabled</span>
+            </div>
           </div>
+          <button
+            className="theme-toggle"
+            onClick={() => setColorScheme((mode) => (mode === "dark" ? "light" : "dark"))}
+            aria-label="Toggle color theme"
+          >
+            <Icon name={colorScheme === "dark" ? "sun" : "moon"} />
+            {colorScheme === "dark" ? "Light mode" : "Dark mode"}
+          </button>
         </div>
-      </header>
+      </aside>
 
       <main className="content">
         {activePage === "dashboard" && !scan && (
         <section className="hero-panel">
           <div>
             <p className="eyebrow">AI media risk dashboard</p>
-            <h1>{scan ? verdictLabel(overallScore) : "Reveal what hides beneath the image."}</h1>
+            <h1>Reveal what hides beneath the image.</h1>
             <p className="hero-copy">
-              {scan
-                ? `Veil confidence: ${formatPercent(confidenceScore)}.`
-                : "Upload an image to check whether it looks authentic before you trust it."}
+              Upload an image to check whether it looks authentic before you trust it.
             </p>
           </div>
           <div className="status-card">
@@ -557,25 +522,23 @@ function App() {
 
         {activePage === "dashboard" && scan && (
           <section className="panel result-panel">
-            <div className="result-report">
-              <div className="result-lead">
+            <div className="result-header">
+              <div className="result-header-verdict">
                 <p className="eyebrow">Authenticity report</p>
-                <h2>
-                  {resultRisk.text}
-                </h2>
-                <div className="confidence-readout">
-                  <span>{scan.comparison.provisional ? "Provisional confidence" : "Confidence"}</span>
-                  <strong>{formatPercent(confidenceScore)}</strong>
-                </div>
-                <div className={`risk-orb ${resultRisk.type}`}>
+                <div className="score-readout">
                   <strong>{formatPercent(overallScore)}</strong>
-                  <span>{scan.comparison.inconclusive ? "checks disagree" : scoreCaption(overallScore)}</span>
+                  <span>AI-generation likelihood</span>
                 </div>
-                <button className="secondary-button" onClick={() => navigate("upload")}>
-                  Check Another Image
-                </button>
+                <div className="result-lead-verdict">
+                  <span className={`verdict-pill ${style.type}`}>{verdict ?? "Inconclusive"}</span>
+                </div>
               </div>
+              <button className="secondary-button" onClick={() => navigate("upload")}>
+                Check Another Image
+              </button>
+            </div>
 
+            <div className="result-report">
               <div className="image-review-card">
                 <p className="eyebrow">Image reviewed</p>
                 {preview && <img src={preview} alt="Analyzed upload" />}
@@ -612,52 +575,96 @@ function App() {
             <div className="guidance-grid">
               <div className="guidance-card">
                 <p className="eyebrow">Meaning</p>
-                {scan.comparison.userSummary.slice(0, 2).map((line, index) => (
+                {guidance?.userSummary.slice(0, 2).map((line, index) => (
                   <p key={`${line}-${index}`}>{line}</p>
                 ))}
               </div>
 
               <div className="guidance-card">
                 <p className="eyebrow">Check</p>
-                {scan.comparison.visualChecks.slice(0, 2).map((line, index) => (
+                {guidance?.visualChecks.slice(0, 2).map((line, index) => (
                   <p key={`${line}-${index}`}>{line}</p>
                 ))}
               </div>
 
               <div className="guidance-card">
                 <p className="eyebrow">Next</p>
-                {scan.comparison.nextSteps.slice(0, 2).map((line, index) => (
+                {guidance?.nextSteps.slice(0, 2).map((line, index) => (
                   <p key={`${line}-${index}`}>{line}</p>
                 ))}
               </div>
             </div>
 
             <details className="technical-details">
-              <summary>Show more detail</summary>
+              <summary>Additional info: local detector, metadata, and API breakdown</summary>
+
+              {ratio.total > 0 && (
+                <p className="ratio-line">
+                  <strong>{ratio.flagged}/{ratio.total}</strong> independent checks flagged this image
+                </p>
+              )}
+
+              {scan.envelope?.signals?.length > 0 && (
+                <div className="signal-chip-row">
+                  {scan.envelope.signals.map((signal) => (
+                    <div className={`signal-chip ${signalTone(signal)}`} key={`chip-${signal.name}`}>
+                      <span className="signal-chip-name">{signal.name}</span>
+                      <span className="signal-chip-value">{signalChipValue(signal)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {aggregate?.reasons?.length > 0 && (
+                <ul className="reason-list">
+                  {aggregate.reasons.slice(0, 3).map((reason, index) => (
+                    <li key={`reason-${index}`}>{reason}</li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="signal-breakdown">
+                {CATEGORY_ORDER.map((category) => (
+                  <div className="signal-group" key={category}>
+                    <h4>{CATEGORY_LABEL[category]}</h4>
+                    {scan.groups[category].length === 0 ? (
+                      <p className="panel-copy">No signals in this category for this scan.</p>
+                    ) : (
+                      <ul>
+                        {scan.groups[category].map((signal) => (
+                          <li key={`sig-${signal.name}`}>
+                            <strong>{signal.name}</strong> — {signal.status}
+                            {signal.ai_score != null ? ` | AI likelihood ${formatPercent(signal.ai_score)}` : ""}
+                            {signal.manipulation_score != null ? ` | manipulation ${formatPercent(signal.manipulation_score)}` : ""}
+                            {signal.error ? ` | error: ${signal.error}` : ""}
+                            {signal.notes?.length > 0 && (
+                              <ul>
+                                {signal.notes.map((note, index) => (
+                                  <li key={`note-${signal.name}-${index}`}>{note}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+
               <ul>
-                {scan.comparison.userSummary.slice(2).map((line, index) => (
-                  <li key={`${line}-${index}`}>{line}</li>
+                {guidance?.userSummary.slice(2).map((line, index) => (
+                  <li key={`us-${line}-${index}`}>{line}</li>
                 ))}
-                {scan.comparison.visualChecks.slice(2).map((line, index) => (
-                  <li key={`${line}-${index}`}>{line}</li>
+                {guidance?.visualChecks.slice(2).map((line, index) => (
+                  <li key={`vc-${line}-${index}`}>{line}</li>
                 ))}
-                {scan.comparison.nextSteps.slice(2).map((line, index) => (
-                  <li key={`${line}-${index}`}>{line}</li>
+                {guidance?.nextSteps.slice(2).map((line, index) => (
+                  <li key={`ns-${line}-${index}`}>{line}</li>
                 ))}
-                {scan.comparison.explanation.map((line, index) => (
-                  <li key={`${line}-${index}`}>{line}</li>
-                ))}
-                <li>Internal score: {formatPercent(scan.comparison.rawScores.local)}</li>
-                <li>External (Sightengine) score: {formatPercent(scan.comparison.rawScores.sightengine)}</li>
-                <li>External (Hive) score: {formatPercent(scan.comparison.rawScores.hive)}</li>
-                <li>Face manipulation score: {formatPercent(scan.comparison.rawScores.deepfake)}</li>
-                {scan.envelope?.signals?.map((signal) => (
-                  <li key={`sig-${signal.name}`}>
-                    {signal.name} [{signal.signal_class}] - {signal.status}
-                    {signal.ai_score != null ? ` | ai ${formatPercent(signal.ai_score)}` : ""}
-                    {signal.manipulation_score != null ? ` | manip ${formatPercent(signal.manipulation_score)}` : ""}
-                  </li>
-                ))}
+                <li>Fused AI-generation score: {formatPercent(overallScore)}</li>
+                <li>Fused manipulation score: {formatPercent(manipulationScore)}</li>
+                <li>Disagreement across independent checks: {formatPercent(aggregate?.disagreement)}</li>
               </ul>
             </details>
           </section>
@@ -675,14 +682,12 @@ function App() {
                 <span>File</span>
                 <span>Verdict</span>
                 <span>Veil Score</span>
-                <span>Confidence</span>
               </div>
               {history.map((item, index) => (
                 <div className="history-row" key={`${item.filename}-${index}`}>
                   <span>{item.filename}</span>
                   <span>{item.verdict}</span>
                   <span>{item.score}</span>
-                  <span>{item.confidence}</span>
                 </div>
               ))}
             </div>
@@ -785,17 +790,17 @@ function App() {
                 <div className="settings-list">
                   <div className="settings-row">
                     <div>
-                      <strong>Decision threshold</strong>
-                      <p>Scores at or above 50% are treated as likely AI-generated or manipulated.</p>
+                      <strong>Fusion</strong>
+                      <p>The backend weighs each check by its evidence class (provenance, detector, forensic) and self-reported confidence, then fuses the AI-generation and manipulation axes separately.</p>
                     </div>
-                    <span>50%</span>
+                    <span>Engine-driven</span>
                   </div>
                   <div className="settings-row">
                     <div>
                       <strong>Risk bands</strong>
-                      <p>Low risk below 40%, review between 40-70%, high risk at 70% and above.</p>
+                      <p>Likely Authentic, Low Risk, Medium Risk, High Risk — or Inconclusive when evidence is missing, weak, or contradictory.</p>
                     </div>
-                    <span>3 levels</span>
+                    <span>5 states</span>
                   </div>
                 </div>
               </section>
@@ -813,17 +818,17 @@ function App() {
                   <div className="settings-row">
                     <div>
                       <strong>Theme</strong>
-                      <p>Choose the visual style used across the dashboard.</p>
+                      <p>Switch between light and dark color schemes.</p>
                     </div>
                     <div className="segmented-control" aria-label="Theme mode">
-                      <button className={themeMode === "midnight" ? "active" : ""} onClick={() => setThemeMode("midnight")}>Midnight</button>
-                      <button className={themeMode === "ice" ? "active" : ""} onClick={() => setThemeMode("ice")}>Ice</button>
+                      <button className={colorScheme === "light" ? "active" : ""} onClick={() => setColorScheme("light")}>Light</button>
+                      <button className={colorScheme === "dark" ? "active" : ""} onClick={() => setColorScheme("dark")}>Dark</button>
                     </div>
                   </div>
                   <div className="settings-row">
                     <div>
                       <strong>Motion</strong>
-                      <p>Enable or reduce visual pulse, meter, and entrance animations.</p>
+                      <p>Enable or reduce entrance animations.</p>
                     </div>
                     <div className="segmented-control" aria-label="Motion mode">
                       <button className={motionMode === "on" ? "active" : ""} onClick={() => setMotionMode("on")}>On</button>

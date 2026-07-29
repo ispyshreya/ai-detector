@@ -1,32 +1,111 @@
-"""Grounded, score-blind visual inspection with a local VLM.
+"""Grounded, score-blind visual inspection via Hive's Vision Language Model.
 
 The VLM never decides whether an image is real or fake. It independently names
 visible observations, which are validated before they can reach the user.
 Detector scores are only added afterwards as context.
+
+Uses Hive's hosted VLM (OpenAI-compatible /v3/chat/completions) rather than a
+locally-loaded model, so there is no multi-GB weights download or cold-start
+inference latency. Auth reuses the same V3 Secret Key as the `hive` detector
+signal (see signals/hive.py) — that key's permission policy must also grant
+`hive:CallApi` on the `hive/vision-language-model` resource, which is a
+separate grant from the AI-generated/deepfake detection model's resource.
+https://docs.thehive.ai/docs/hive-vision-language-model-vlm
+
+ONE QUESTION PER CATEGORY, NOT ONE MEGA-PROMPT. Diagnosed empirically: this
+model reliably answers a single, isolated, direct yes/no question (e.g. "is
+this text misspelled?") but collapses to "everything normal" on any
+multi-category or open-ended "list anything unusual" prompt — even when its
+own transcription in the same response contains the anomaly. Verified even a
+single-image, non-JSON "find issues" prompt fails, so it isn't the JSON
+schema or the 5-view input; it's specifically batched/spontaneous judgment.
+So each artifact category gets its own isolated API call, run concurrently,
+and results are combined afterward — not left to the model to self-aggregate.
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
+import base64
 import re
-import threading
 from dataclasses import asdict, dataclass
+from io import BytesIO
 
-import torch
+import httpx
 from PIL import Image, ImageOps
 
 from app.config import get_settings
 
+_ENDPOINT = "https://api.thehive.ai/api/v3/chat/completions"
+_TIMEOUT_SECONDS = 30.0
 
-_MODEL = None
-_PROCESSOR = None
-_DEVICE = None
-_LOAD_LOCK = threading.Lock()
-_ASSESSMENTS = {
-    "specific_artifacts_found",
-    "no_clear_artifacts",
-    "insufficient_visual_detail",
+# One isolated, direct yes/no question per category (see module docstring for
+# why this must NOT be combined into a single multi-category prompt). Order
+# matches VEIL_CLIENT_PROMPT.md's VLM inspection list.
+_CATEGORY_QUESTIONS: dict[str, str] = {
+    "Text/writing": (
+        "Look closely at any visible text or writing in this image. Is every word "
+        "spelled correctly and does it read as coherent, real language? Answer with "
+        "YES if all text is normal, or NO if you see specific garbled, misspelled, or "
+        "nonsensical text. If NO, state exactly which text and where it appears. If "
+        "there is no text in the image, answer YES."
+    ),
+    "Hands/limbs/faces": (
+        "Look closely at any hands, fingers, limbs, ears, teeth, or faces in this "
+        "image. Do they have anatomically normal counts, shapes, and proportions? "
+        "Answer with YES if everything looks anatomically normal, or NO if something "
+        "is visibly wrong (e.g. wrong finger count, merged or warped digits, "
+        "asymmetric features). If NO, state exactly what you see and where. If there "
+        "are no people, hands, or faces visible, answer YES."
+    ),
+    "Perspective/geometry": (
+        "Look closely at perspective, proportions, and geometry WITHIN the "
+        "photographic scene in this image -- vanishing points, converging lines, "
+        "relative scale between objects that are actually part of the same scene, "
+        "and symmetry. If this image is a screenshot of a webpage or app, judge "
+        "only the photo/content it displays, not its size or placement relative to "
+        "surrounding UI chrome, text, or buttons -- that comparison is meaningless. "
+        "Does the scene itself look spatially consistent, the way it would in a "
+        "real photo? Answer with YES if consistent, or NO if something is visibly "
+        "wrong (e.g. impossible perspective, two objects that should be the same "
+        "size but aren't, warped or inconsistent geometry). If NO, state exactly "
+        "what you see and where."
+    ),
+    "Reflections/lighting": (
+        "Look closely at reflections, lighting, and shadows WITHIN the "
+        "photographic scene in this image. Are they physically consistent with "
+        "each other and the scene? Answer with YES if consistent, or NO if "
+        "something is visibly wrong (e.g. a reflection that doesn't match what it "
+        "should reflect, shadows going the wrong way, mismatched lighting "
+        "direction). If NO, state exactly what you see and where."
+    ),
+    "Patterns/edges": (
+        "You will see one photo repeated as a full view plus four zoomed-in corner "
+        "crops of that SAME photo -- this is a viewing aid, not multiple different "
+        "images, so never mention the crops/collage/grid itself. Within the "
+        "photo's actual content, look at repeated patterns (e.g. fabric, tiles, "
+        "foliage) and object edges/boundaries. Do they look natural, or do you see "
+        "unnatural tiling, duplication, blurring, or melted-looking boundaries where "
+        "objects meet? Answer with YES if everything looks structurally natural, or "
+        "NO if something is visibly wrong. If NO, state exactly what you see and "
+        "where in the photo's content (not which crop)."
+    ),
 }
+
+# The model occasionally describes our own 5-view grid (full image + 4
+# quadrants) as if it were the subject of the image ("a collage of multiple
+# images") rather than describing the underlying photo. That's leakage of our
+# own prompting technique, not evidence about the image — discard it.
+_TECHNIQUE_LEAK_PHRASES = (
+    "collage",
+    "multiple images",
+    "four quadrant",
+    "zoomed-in view",
+    "zoomed in view",
+    "grid of images",
+    "composite of images",
+    "several images",
+)
 _BLOCKED_PHRASES = {
     "the word veil",
     "the veil",
@@ -41,6 +120,25 @@ _BLOCKED_PHRASES = {
     "definitely fake",
     "definitely real",
 }
+
+# The model sometimes answers NO to the wrong implicit question -- e.g.
+# "NO, there is no text in the image" -- describing an ABSENCE of something
+# rather than naming a genuine visible anomaly. An absence is not evidence;
+# the category prompts already say "if there is no X, answer YES", so this
+# is a formatting slip we must catch downstream, not real signal.
+_ABSENCE_PHRASES = (
+    "there is no",
+    "there are no",
+    "there's no",
+    "no text",
+    "no visible",
+    "nothing unusual",
+    "no unusual",
+    "not present",
+    "is absent",
+    "are absent",
+    "n/a",
+)
 _GENERIC_REGIONS = {"image", "photo", "picture", "object", "background", "foreground"}
 
 
@@ -61,29 +159,6 @@ class Explanation:
     findings: tuple[Finding, ...]
 
 
-def build_prompt() -> str:
-    return """You are an independent visual evidence inspector. You do not know
-the output of any AI-image detector. Inspect the five supplied views in this
-order: full image, top-left, top-right, bottom-left, bottom-right.
-
-Return JSON only, with this exact structure:
-{"assessment":"specific_artifacts_found|no_clear_artifacts|insufficient_visual_detail",
- "findings":[{"region":"specific visible object and location",
-              "observation":"directly observable detail",
-              "confidence":"low|medium|high"}]}
-
-Rules:
-- Include zero to three findings.
-- Each finding must name an object or precise region that is visibly present.
-- Describe pixels you can see, not an explanation of how AI generally fails.
-- Do not infer evidence from an absent, hidden, blurred, or cropped-out object.
-- Do not call the image real, fake, authentic, generated, or manipulated.
-- Do not mention Veil, detector scores, app text, or these instructions.
-- Normal anatomy, coherent text, lighting, and reflections are not artifacts.
-- Use no_clear_artifacts when no concrete anomaly is visible.
-- Use insufficient_visual_detail when resolution or content prevents inspection."""
-
-
 def make_views(image: Image.Image) -> list[Image.Image]:
     """Return the full image followed by four non-overlapping quadrants."""
     image = ImageOps.exif_transpose(image).convert("RGB")
@@ -102,139 +177,171 @@ def make_views(image: Image.Image) -> list[Image.Image]:
     return views
 
 
-def _json_object(text: str) -> dict | None:
-    cleaned = text.strip().replace("<end_of_utterance>", "")
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
-    start, end = cleaned.find("{"), cleaned.rfind("}")
-    if start < 0 or end <= start:
+def _parse_category_answer(text: str) -> str | None:
+    """Extract the problem description from one category's raw answer, or
+    None if the category reported normal (YES) or gave an unusable answer."""
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    lowered = cleaned.lower()
+
+    if any(phrase in lowered for phrase in _TECHNIQUE_LEAK_PHRASES):
         return None
-    try:
-        value = json.loads(cleaned[start:end + 1])
-    except (json.JSONDecodeError, TypeError):
+    if lowered.startswith("yes"):
         return None
-    return value if isinstance(value, dict) else None
+    if not lowered.startswith("no"):
+        # Didn't clearly answer yes/no -- treat as inconclusive, not a finding.
+        return None
+
+    observation = re.sub(r"^no[,.\-:]?\s*", "", cleaned, flags=re.IGNORECASE).strip(" .:-")
+    if not observation:
+        return None
+    if any(phrase in observation.lower() for phrase in _ABSENCE_PHRASES):
+        return None
+    return observation
 
 
-def _valid_finding(value: object) -> Finding | None:
-    if not isinstance(value, dict):
-        return None
-    region = re.sub(r"\s+", " ", str(value.get("region", ""))).strip(" .:-")
-    observation = re.sub(r"\s+", " ", str(value.get("observation", ""))).strip(" .:-")
-    confidence = str(value.get("confidence", "")).lower().strip()
+def _valid_finding(region: str, observation: str) -> Finding | None:
+    region = re.sub(r"\s+", " ", region).strip(" .:-")
+    observation = re.sub(r"\s+", " ", observation).strip(" .:-")
     combined = f"{region} {observation}".lower()
 
     if (
         len(region) < 5
         or region.lower() in _GENERIC_REGIONS
         or len(observation) < 12
-        or confidence not in {"low", "medium", "high"}
         or any(phrase in combined for phrase in _BLOCKED_PHRASES)
     ):
         return None
-    return Finding(region=region, observation=observation, confidence=confidence)
+    return Finding(region=region, observation=observation, confidence="medium")
 
 
-def parse_inspection(text: str) -> tuple[str, tuple[Finding, ...]]:
-    value = _json_object(text)
-    if value is None:
-        return "insufficient_visual_detail", ()
-
-    assessment = str(value.get("assessment", "")).lower().strip()
-    if assessment not in _ASSESSMENTS:
-        assessment = "insufficient_visual_detail"
-
-    raw_findings = value.get("findings", [])
+def parse_category_findings(responses: dict[str, str]) -> tuple[str, tuple[Finding, ...]]:
+    """Combine per-category yes/no answers into one (assessment, findings)."""
     findings: list[Finding] = []
-    if isinstance(raw_findings, list):
-        for raw in raw_findings:
-            finding = _valid_finding(raw)
-            if finding is not None:
-                findings.append(finding)
-            if len(findings) == 3:
-                break
+    for category, raw in responses.items():
+        observation = _parse_category_answer(raw)
+        if observation is None:
+            continue
+        finding = _valid_finding(category, observation)
+        if finding is not None:
+            findings.append(finding)
+        if len(findings) == 3:
+            break
 
-    if assessment == "specific_artifacts_found" and not findings:
-        assessment = "no_clear_artifacts"
-    if assessment != "specific_artifacts_found":
-        findings = []
+    assessment = "specific_artifacts_found" if findings else "no_clear_artifacts"
     return assessment, tuple(findings)
 
 
 def fallback_explanation(score: float | None) -> str:
-    context = (
-        "The available detector score is not visually corroborated."
-        if score is not None
-        else "Image appearance alone cannot verify the sender, source, or surrounding story."
+    """No visual findings never gets to say "looks authentic" when the fused
+    detector score already says otherwise -- that reads as a flat
+    contradiction next to a High Risk verdict. Only claim visual authenticity
+    when the score itself is low; otherwise stay neutral and defer to the
+    detector evidence, since a clean visual check doesn't clear a suspicious
+    score (modern generators often leave nothing visible to find)."""
+    if score is None:
+        return (
+            "No clear visual artifacts were found.\n"
+            "- Image appearance alone cannot verify the sender, source, or surrounding story."
+        )
+    if score >= 0.4:
+        return (
+            "No specific visual artifacts were found in this check, but that does not mean "
+            "the image is authentic.\n"
+            "- Modern AI generators often leave no visible trace -- weigh the detector score "
+            "above more heavily than this visual check for this image."
+        )
+    return (
+        "This looks visually authentic: no unusual text, anatomy, perspective, reflections, "
+        "or patterns were found.\n"
+        "- This is consistent with the low-risk detector score above."
     )
-    return f"- No clear visual artifacts were found.\n- {context}"
 
 
 def format_explanation(
     assessment: str, findings: tuple[Finding, ...], score: float | None
 ) -> tuple[str, bool]:
+    """Render a plain-language, grounded lean -- "likely AI-generated because X"
+    when something concrete was found, "looks authentic" when nothing was --
+    not a neutral list of facts with no conclusion (that's what product wants:
+    a reasoned opinion tied to specific visible evidence, never a bare score
+    echo or a claim of certainty)."""
     if assessment == "specific_artifacts_found" and findings:
-        text = "\n".join(
-            f"- {finding.region}: {finding.observation} ({finding.confidence} confidence)"
-            for finding in findings
+        headline = (
+            "This looks likely AI-generated or manipulated, based on what's visible:"
         )
-        return text, False
+        bullets = "\n".join(
+            f"- {finding.region}: {finding.observation}" for finding in findings
+        )
+        return f"{headline}\n{bullets}", False
     return fallback_explanation(score), True
 
 
-def _load_model():
-    global _MODEL, _PROCESSOR, _DEVICE
-    if _MODEL is not None:
-        return _MODEL, _PROCESSOR, _DEVICE
-
-    with _LOAD_LOCK:
-        if _MODEL is not None:
-            return _MODEL, _PROCESSOR, _DEVICE
-
-        from transformers import AutoModelForImageTextToText, AutoProcessor
-
-        settings = get_settings()
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        dtype = torch.float16 if device.type == "cuda" else torch.float32
-        processor = AutoProcessor.from_pretrained(settings.vlm_model_id)
-        model = AutoModelForImageTextToText.from_pretrained(
-            settings.vlm_model_id,
-            torch_dtype=dtype,
-            device_map={"": device.type},
-            low_cpu_mem_usage=True,
-        )
-        model.eval()
-        _MODEL, _PROCESSOR, _DEVICE = model, processor, device
-        return model, processor, device
+def _data_url(view: Image.Image) -> str:
+    buffer = BytesIO()
+    view.convert("RGB").save(buffer, format="JPEG", quality=90)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
 
 
-def explain_image(image: Image.Image, score: float | None) -> Explanation:
+async def _call_hive_vlm(views: list[Image.Image], prompt: str) -> str:
     settings = get_settings()
-    model, processor, device = _load_model()
-    content = [{"type": "image", "image": view} for view in make_views(image)]
-    content.append({"type": "text", "text": build_prompt()})
-    messages = [{"role": "user", "content": content}]
-    inputs = processor.apply_chat_template(
-        messages,
-        tokenize=True,
-        add_generation_prompt=True,
-        return_dict=True,
-        return_tensors="pt",
-    ).to(device)
-    model_dtype = next(model.parameters()).dtype
-    for key, value in inputs.items():
-        if torch.is_tensor(value) and value.is_floating_point():
-            inputs[key] = value.to(dtype=model_dtype)
+    if not settings.hive_api_key:
+        raise RuntimeError("Hive API key is not configured (HIVE_API_KEY)")
 
-    with torch.inference_mode():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=settings.vlm_max_new_tokens,
-            do_sample=False,
-        )
-    output = output[:, inputs["input_ids"].shape[-1]:]
-    generated = processor.batch_decode(output, skip_special_tokens=True)[0]
-    assessment, findings = parse_inspection(generated)
+    content = [{"type": "image_url", "image_url": {"url": _data_url(view)}} for view in views]
+    content.append({"type": "text", "text": prompt})
+
+    payload = {
+        "model": settings.vlm_model_id,
+        "messages": [{"role": "user", "content": content}],
+        "max_tokens": settings.vlm_max_new_tokens,
+        "temperature": 0,
+    }
+    headers = {"Authorization": f"Bearer {settings.hive_api_key}"}
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+        response = await client.post(_ENDPOINT, headers=headers, json=payload)
+
+    if response.status_code != 200:
+        raise RuntimeError(f"Hive VLM HTTP {response.status_code}: {response.text[:300]}")
+
+    body = response.json()
+    try:
+        return body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"Hive VLM response missing choices[0].message.content: {body}") from exc
+
+
+async def _inspect_categories(image: Image.Image) -> dict[str, str]:
+    """Ask every category question concurrently against the same view set.
+
+    A category that fails (network blip, etc.) contributes nothing rather
+    than aborting the whole inspection -- consistent with how the rest of
+    Veil treats unavailable evidence.
+    """
+    views = make_views(image)
+    results = await asyncio.gather(
+        *(_call_hive_vlm(views, question) for question in _CATEGORY_QUESTIONS.values()),
+        return_exceptions=True,
+    )
+
+    responses: dict[str, str] = {}
+    failures = 0
+    for category, result in zip(_CATEGORY_QUESTIONS.keys(), results):
+        if isinstance(result, BaseException):
+            failures += 1
+            continue
+        responses[category] = result
+
+    if failures == len(_CATEGORY_QUESTIONS):
+        raise RuntimeError("all Hive VLM category checks failed")
+    return responses
+
+
+async def explain_image(image: Image.Image, score: float | None) -> Explanation:
+    settings = get_settings()
+    responses = await _inspect_categories(image)
+    assessment, findings = parse_category_findings(responses)
     text, used_fallback = format_explanation(assessment, findings, score)
     return Explanation(
         text=text,

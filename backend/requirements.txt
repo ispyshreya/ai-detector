@@ -9,9 +9,5 @@ torch
 torchvision
 exifread==3.0.0
 anthropic==0.39.0
-transformers==4.51.3
-accelerate>=1.6.0
-safetensors>=0.5.0
-num2words>=0.5.14
 # C2PA verification (optional; module degrades gracefully if absent)
 # c2pa==0.6.1

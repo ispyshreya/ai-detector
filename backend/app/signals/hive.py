@@ -3,6 +3,19 @@
 Hive returns a binary AI-generation score, optional source-generator scores,
 and a deepfake score in one classification response. This adapter normalizes
 those values into Veil's shared SignalResult contract.
+
+IMPORTANT: this account is on Hive's self-serve V3 Playground tier, not a
+sales-provisioned V2 Enterprise project. The two are genuinely different
+products with different endpoints, auth schemes, and response shapes:
+
+  * V3 (this signal): POST /api/v3/hive/ai-generated-and-deepfake-content-
+    detection, `authorization: Bearer <secret key>`, response is a flat
+    {"output": [{"classes": [...]}]}. Rate-limited to 100 requests/day on
+    the free tier. https://docs.thehive.ai/reference/ai-generated-and-deepfake-content-detection
+  * V2 Enterprise: POST /api/v2/task/sync, `authorization: Token <key>`,
+    response is nested under status[0].response.output[0].classes. Requires
+    contacting Hive sales for a project. Do NOT point this signal at it
+    without also rewriting the parsing below.
 """
 
 from __future__ import annotations
@@ -24,6 +37,8 @@ _NON_SOURCE_CLASSES = {
     "none",
     "inconclusive",
     "inconclusive_video",
+    "ai_generated_audio",
+    "not_ai_generated_audio",
 }
 
 
@@ -44,7 +59,7 @@ class HiveSignal(Signal):
                 image.content_type or "application/octet-stream",
             )
         }
-        headers = {"Authorization": f"Token {settings.hive_api_key}"}
+        headers = {"Authorization": f"Bearer {settings.hive_api_key}"}
 
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
@@ -69,18 +84,7 @@ class HiveSignal(Signal):
                 latency_ms=latency_ms,
             )
 
-        task = _first_task(payload)
-        status = ((task.get("status") if isinstance(task, dict) else {}) or {})
-        if isinstance(status, dict) and status.get("code") not in (None, "0", 0):
-            message = status.get("message", "unknown error")
-            return self._error_result(
-                f"hive failure: {message}",
-                started,
-                latency_ms=latency_ms,
-                raw=payload,
-            )
-
-        classes = _classes_from_task(task)
+        classes = _classes_from_payload(payload)
         if not classes:
             return self._error_result(
                 "hive response did not include classes",
@@ -89,17 +93,18 @@ class HiveSignal(Signal):
                 raw=payload,
             )
 
+        # V3 class items are {"class": <label>, "value": <0..1 confidence>} —
+        # NOT "score" (that was the V2 field name).
         class_scores = {
-            item["class"]: item["score"]
+            item["class"]: item["value"]
             for item in classes
             if isinstance(item, dict)
             and isinstance(item.get("class"), str)
-            and isinstance(item.get("score"), (int, float))
+            and isinstance(item.get("value"), (int, float))
         }
         ai_score = _coerce_score(class_scores.get("ai_generated"))
         manipulation_score = _coerce_score(class_scores.get("deepfake"))
         source_name, source_score = _top_source(class_scores)
-        tags = _algorithmic_tags(task)
 
         notes: list[str] = []
         if ai_score is not None:
@@ -108,11 +113,6 @@ class HiveSignal(Signal):
             notes.append(f"Most likely generator: {source_name} ({_pct(source_score)})")
         if manipulation_score is not None:
             notes.append(f"Deepfake likelihood {_pct(manipulation_score)}")
-        if tags.get("c2pa"):
-            c2pa = tags["c2pa"]
-            generator = c2pa.get("claim_generator") or c2pa.get("actions_software_agent")
-            if generator:
-                notes.append(f"C2PA metadata references {generator}")
 
         confidence = None
         if ai_score is not None:
@@ -150,31 +150,19 @@ class HiveSignal(Signal):
         )
 
 
-def _first_task(payload: dict[str, Any]) -> dict[str, Any]:
-    status = payload.get("status")
-    if isinstance(status, list) and status and isinstance(status[0], dict):
-        return status[0]
-    return payload
+def _classes_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """V3 response shape: {"output": [{"classes": [...], "extra": [...]}]}.
 
-
-def _classes_from_task(task: dict[str, Any]) -> list[dict[str, Any]]:
-    response = task.get("response") if isinstance(task, dict) else None
-    output = response.get("output") if isinstance(response, dict) else None
+    `output` has one entry per video frame; for a single image request there
+    is exactly one entry, so we read output[0] (per Hive's own "Single Image"
+    guidance).
+    """
+    output = payload.get("output") if isinstance(payload, dict) else None
     if isinstance(output, list) and output and isinstance(output[0], dict):
         classes = output[0].get("classes")
         if isinstance(classes, list):
             return classes
     return []
-
-
-def _algorithmic_tags(task: dict[str, Any]) -> dict[str, Any]:
-    response = task.get("response") if isinstance(task, dict) else None
-    output = response.get("output") if isinstance(response, dict) else None
-    if isinstance(output, list) and output and isinstance(output[0], dict):
-        tags = output[0].get("algorithmic_tags")
-        if isinstance(tags, dict):
-            return tags
-    return {}
 
 
 def _top_source(class_scores: dict[str, float]) -> tuple[str | None, float | None]:
