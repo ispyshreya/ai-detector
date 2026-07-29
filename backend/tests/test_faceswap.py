@@ -103,3 +103,16 @@ def test_real_detector_finds_face_and_skips_nonface():
     bicycle = Image.open(os.path.join(_REF, "real_ai_demo_1_bicycle.jpg")).convert("RGB")
     assert len(detect(headshot)) >= 1        # a real face is found
     assert len(detect(bicycle)) == 0          # no face on the bicycle
+
+
+def test_classifier_maps_label_to_probability(monkeypatch):
+    # Fake the transformers pipeline: return HF-style label/score dicts.
+    class FakePipe:
+        def __call__(self, pil):
+            return [{"label": "fake", "score": 0.82}, {"label": "real", "score": 0.18}]
+    monkeypatch.setattr(fs, "_build_pipeline", lambda model_id: FakePipe())
+    monkeypatch.setattr(fs, "_MODEL", None)
+    monkeypatch.setattr(fs, "get_settings", lambda: _settings())
+    classify = fs._load_classifier()
+    p = classify(Image.new("RGB", (32, 32)))
+    assert abs(p - 0.82) < 1e-6

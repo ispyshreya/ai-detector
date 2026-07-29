@@ -52,9 +52,36 @@ def _load_face_detector() -> Callable[[Image.Image], list]:
     return _DETECTOR
 
 
+_FAKE_LABELS = {"fake", "deepfake", "ai", "manipulated", "spoof", "1"}
+
+
+def _p_fake(preds: list) -> float:
+    """Map HF image-classification output ([{label, score}, ...]) to P(fake)."""
+    for p in preds:
+        if str(p["label"]).strip().lower() in _FAKE_LABELS:
+            return float(p["score"])
+    # Fallback: if only a 'real'-type label is present, invert it.
+    top = max(preds, key=lambda p: p["score"])
+    return 1.0 - float(top["score"]) if "real" in str(top["label"]).lower() else float(top["score"])
+
+
+def _build_pipeline(model_id: str):
+    from transformers import pipeline
+    return pipeline("image-classification", model=model_id, top_k=None)
+
+
 def _load_classifier() -> Callable[[Image.Image], float]:
     """Return classify(pil_face) -> p_fake in [0,1]. Implemented in Task 5."""
-    raise NotImplementedError("classifier wired in Task 5")
+    global _MODEL
+    if _MODEL is not None:
+        return _MODEL
+    pipe = _build_pipeline(get_settings().faceswap_model_id)
+
+    def classify(crop: Image.Image) -> float:
+        return _p_fake(pipe(crop.convert("RGB")))
+
+    _MODEL = classify
+    return _MODEL
 
 
 class FaceSwapSignal(Signal):
