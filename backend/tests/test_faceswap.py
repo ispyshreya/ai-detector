@@ -83,3 +83,8 @@ async def test_classifier_failure_is_reported_not_raised(monkeypatch):
     result = await fs.FaceSwapSignal().analyze(_img())
     assert result.status.value == "error"
     assert "classify boom" in (result.error or "")
+
+
+def test_faceswap_registered():
+    from app.signals.registry import all_signals
+    assert any(s.name == "faceswap" for s in all_signals())
