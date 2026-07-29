@@ -1,4 +1,6 @@
 import io
+import os
+import pytest
 from types import SimpleNamespace
 from PIL import Image
 from app.schemas import SignalClass
@@ -88,3 +90,16 @@ async def test_classifier_failure_is_reported_not_raised(monkeypatch):
 def test_faceswap_registered():
     from app.signals.registry import all_signals
     assert any(s.name == "faceswap" for s in all_signals())
+
+
+_REF = os.path.expanduser("~/Downloads/photos")
+_has_ref = os.path.isdir(_REF)
+
+
+@pytest.mark.skipif(not _has_ref, reason="reference images not present")
+def test_real_detector_finds_face_and_skips_nonface():
+    detect = fs._load_face_detector()
+    headshot = Image.open(os.path.join(_REF, "sarthakhans_photo.jpg")).convert("RGB")
+    bicycle = Image.open(os.path.join(_REF, "real_ai_demo_1_bicycle.jpg")).convert("RGB")
+    assert len(detect(headshot)) >= 1        # a real face is found
+    assert len(detect(bicycle)) == 0          # no face on the bicycle

@@ -25,8 +25,31 @@ def _should_flag(score: float | None, threshold: float) -> bool:
 
 
 def _load_face_detector() -> Callable[[Image.Image], list]:
-    """Return detect(pil) -> list[PIL face crop]. Implemented in Task 4."""
-    raise NotImplementedError("face detector wired in Task 4")
+    """Return detect(pil) -> list[PIL face crop] using OpenCV Haar cascade."""
+    global _DETECTOR
+    if _DETECTOR is not None:
+        return _DETECTOR
+    import cv2
+    import numpy as np
+
+    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    cascade = cv2.CascadeClassifier(cascade_path)
+
+    def detect(pil: Image.Image) -> list:
+        arr = np.array(pil.convert("RGB"))
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        boxes = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5,
+                                         minSize=(48, 48))
+        crops = []
+        for (x, y, w, h) in boxes:
+            m = int(0.25 * max(w, h))  # margin so context isn't cut off
+            x0, y0 = max(0, x - m), max(0, y - m)
+            x1, y1 = min(pil.width, x + w + m), min(pil.height, y + h + m)
+            crops.append(pil.crop((x0, y0, x1, y1)))
+        return crops
+
+    _DETECTOR = detect
+    return _DETECTOR
 
 
 def _load_classifier() -> Callable[[Image.Image], float]:

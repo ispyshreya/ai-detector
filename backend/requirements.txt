@@ -9,6 +9,7 @@ torch
 torchvision
 open_clip_torch>=2.24.0  # frozen CLIP ViT-L/14 backbone for the local detector
 exifread==3.0.0
+opencv-python-headless>=4.9,<5
 anthropic==0.39.0
 transformers==4.51.3
 accelerate>=1.6.0
