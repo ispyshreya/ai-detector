@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     vlm_model_id: str = "HuggingFaceTB/SmolVLM-500M-Instruct"
     vlm_max_new_tokens: int = 120
 
+    # --- Face-swap / deepfake-face signal ---
+    faceswap_enabled: bool = True
+    faceswap_model_id: str = "dima806/deepfake_vs_real_image_detection"
+    faceswap_threshold: float = 0.7  # conservative; tuned by the acceptance gate
+
     # --- Behavior ---
     signal_timeout_seconds: float = 6.0  # per-signal cap; supports p95 < 6s goal
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
