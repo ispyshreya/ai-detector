@@ -139,11 +139,49 @@ const buildComparison = (detectors) => {
   const faceManipulation = faceSwapScore != null && faceSwapScore >= FACE_SWAP_THRESHOLD;
 
   if (usableScores.length === 0) {
+    if (faceManipulation) {
+      return {
+        overallScore: 0.6,
+        confidence: faceSwapScore ?? 0.6,
+        inconclusive: false,
+        disagreement: 0,
+        agreement: "No AI-detector scores — face-swap signal only",
+        explanation: [
+          "No AI-generation detector returned a usable score for this image.",
+          "However, the face-swap detector flagged possible face manipulation above the confidence threshold.",
+        ],
+        userSummary: [
+          "Possible face manipulation detected — the face may be swapped or composited. Verify the source.",
+          "No general AI detector returned a score, so Veil cannot confirm whether the image as a whole is AI-generated.",
+        ],
+        visualChecks: [],
+        nextSteps: [],
+        rawScores: {
+          local: null,
+          sightengine: null,
+          hive: null,
+          deepfake: deepfakeScore ?? null,
+          faceswap: faceSwapScore,
+        },
+      };
+    }
     return {
       overallScore: null,
       confidence: null,
+      inconclusive: false,
+      disagreement: 0,
       agreement: "No detector scores available",
       explanation: ["Neither detector returned a usable AI-generation score."],
+      userSummary: [],
+      visualChecks: [],
+      nextSteps: [],
+      rawScores: {
+        local: null,
+        sightengine: null,
+        hive: null,
+        deepfake: deepfakeScore ?? null,
+        faceswap: faceSwapScore,
+      },
     };
   }
 
