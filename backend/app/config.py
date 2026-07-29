@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # catches the Curry composite (0.873) while all reference genuine faces stay
     # below (max 0.744, the driver's-license photo). Thin margin on documents.
 
+    # --- Document-tamper signal ---
+    doctamper_enabled: bool = True
+    doctamper_threshold: float = 0.60  # tuned by the acceptance gate; set >1.0 for indicator-only
+    doctamper_doc_gate_threshold: float = 0.55  # CLIP doc-vs-photo probability to treat as a document
+    doctamper_backbone: str = "ViT-L-14"  # CLIP backbone for the document-gate (weights cached by the local signal)
+
     # --- Behavior ---
     signal_timeout_seconds: float = 6.0  # per-signal cap; supports p95 < 6s goal
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
