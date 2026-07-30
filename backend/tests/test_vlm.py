@@ -117,11 +117,24 @@ def test_findings_render_as_a_grounded_verdict_not_bare_facts():
     assert "six visible fingers" in text
 
 
-def test_authentic_case_also_states_a_verdict():
+def test_authentic_case_uses_the_required_no_artifacts_wording():
     assessment, findings = parse_category_findings({"Text/writing": "YES"})
     text, used_fallback = format_explanation(assessment, findings, 0.1)
     assert used_fallback is True
-    assert "looks visually authentic" in text
+    assert "No obvious visual AI-generation artifacts were identified." in text
+
+
+def test_low_score_finding_does_not_say_likely_ai_generated():
+    """Product requirement: explanations must follow the verdict. A minor
+    finding under a clearly low/authentic score must not open with "likely
+    AI-generated" -- that flatly contradicts a Likely Authentic verdict."""
+    assessment, findings = parse_category_findings(
+        {"Text/writing": "NO, the word WLID is oddly stylized on the shirt"}
+    )
+    text, used_fallback = format_explanation(assessment, findings, 0.1)
+    assert used_fallback is False
+    assert "likely AI-generated" not in text
+    assert "point toward this image being authentic" in text
 
 
 def test_no_findings_uses_fallback():

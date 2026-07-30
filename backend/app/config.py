@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # --- Local trained detector ---
     local_model_checkpoint: str = str(REPO_ROOT / "detector-trainer" / "output" / "best_model.pt")
     local_model_name: str = "resnet50_dropout"
+    # When true, SignalResult.raw["debug"] on the `local` signal includes full
+    # per-patch coordinates/scores and aggregate stats (mean/median/top-20%/
+    # etc). Off by default so the normal envelope stays lean -- this can get
+    # large for a big image's patch grid. See signals/local_model.py.
+    local_model_debug: bool = False
 
     # --- Forensic / context services ---
     serpapi_key: str | None = None  # reverse image search

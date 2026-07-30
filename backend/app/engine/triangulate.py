@@ -82,9 +82,9 @@ _MANIPULATION_MIN_MASS = 0.4
 
 
 def _is_unvalidated_resize(signal: SignalResult) -> bool:
-    """True for the `local` signal when its input had to be downsampled to
-    the checkpoint's 32x32 CIFAKE training resolution (see
-    signals/local_model.py). That resize is an unvalidated heuristic that has
+    """True for the `local` signal when its input had to be diced into
+    32x32 tiles to match the checkpoint's CIFAKE training resolution (see
+    signals/local_model.py). That tiling is an unvalidated heuristic that has
     been observed in production to disagree sharply with validated detectors
     on ordinary real photos, dragging otherwise-confident real-world scans
     into Inconclusive. It still appears in the per-signal breakdown for
@@ -94,7 +94,7 @@ def _is_unvalidated_resize(signal: SignalResult) -> bool:
     return (
         signal.name == "local"
         and isinstance(signal.raw, dict)
-        and signal.raw.get("was_resized") is True
+        and signal.raw.get("was_tiled") is True
     )
 
 
@@ -173,9 +173,9 @@ def triangulate(signals: list[SignalResult]) -> Aggregate:
             reasons.append(f"{signal.name} did not apply to this image: {signal.notes[0]}")
         elif _is_unvalidated_resize(signal):
             reasons.append(
-                f"{signal.name} scored this image after downsampling it to 32x32, an "
-                "unvalidated resize heuristic — it's shown for reference but was excluded "
-                "from the verdict."
+                f"{signal.name} scored this image after dicing it into 32x32 tiles, an "
+                "unvalidated domain-matching heuristic — it's shown for reference but was "
+                "excluded from the verdict."
             )
 
     primary = _primary_ai_signals(signals)

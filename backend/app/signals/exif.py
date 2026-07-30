@@ -130,10 +130,16 @@ class ExifSignal(Signal):
             software_is_editor = any(sig in low for sig in _EDITOR_SIGNATURES)
 
         if not tags:
-            # No metadata of any kind: strongest available anomaly here.
-            ai_score = 0.7
-            notes.append("No EXIF/metadata present at all — consistent with a "
-                         "stripped or synthetically generated image.")
+            # No metadata of any kind. This is routine for images that have
+            # passed through WhatsApp or other social platforms, which strip
+            # EXIF on send/compression -- it is unavailable provenance, not
+            # evidence of AI generation, so it must not swing the score.
+            ai_score = 0.15
+            notes.append(
+                "No EXIF/metadata present. This is common for images shared through "
+                "WhatsApp and other social platforms, which routinely strip metadata — "
+                "treated as unavailable provenance, not AI-generation evidence."
+            )
         elif not has_make_model:
             # Some tags, but no camera identity: still suspicious.
             ai_score = 0.65

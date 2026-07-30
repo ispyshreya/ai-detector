@@ -118,6 +118,36 @@ const CATEGORY_LABEL = {
 
 const CATEGORY_ORDER = ["local", "metadata", "api"];
 
+// Chip-row grouping for the top "Additional info" summary: AI detection vs.
+// manipulation vs. provenance are different questions, so they must not be
+// shown as one undifferentiated row of equivalent checks.
+const CHIP_GROUP = {
+  local: "ai",
+  hive: "ai",
+  sightengine: "ai",
+  ela: "manipulation",
+  exif: "provenance",
+  c2pa: "provenance",
+  reverse_search: "provenance",
+};
+
+const CHIP_GROUP_LABEL = {
+  ai: "AI detection",
+  manipulation: "Manipulation",
+  provenance: "Provenance",
+};
+
+const CHIP_GROUP_ORDER = ["ai", "manipulation", "provenance"];
+
+const groupChips = (signals) => {
+  const groups = { ai: [], manipulation: [], provenance: [] };
+  for (const signal of signals ?? []) {
+    const group = CHIP_GROUP[signal.name];
+    if (group) groups[group].push(signal);
+  }
+  return groups;
+};
+
 const groupSignals = (signals) => {
   const groups = { local: [], metadata: [], api: [] };
   for (const signal of signals ?? []) {
@@ -133,8 +163,28 @@ const groupSignals = (signals) => {
 // front rather than buried in the collapsed technical detail.
 const FLAG_THRESHOLD = 0.5;
 
+// The local model's checkpoint is trained/validated for CIFAKE-scale input;
+// on real-world photos its patch-aggregated score in this band is a coin
+// flip, not evidence either way, so it must read as "inconclusive" rather
+// than as a clear/flag verdict.
+const LOCAL_INCONCLUSIVE_LOW = 0.4;
+const LOCAL_INCONCLUSIVE_HIGH = 0.6;
+
+// Only these three run actual AI-generation classifiers; ELA/EXIF/C2PA are
+// manipulation or provenance checks and must never be counted as "AI
+// detectors flagged this image" (that's what conflated ELA/EXIF into the
+// flag count before).
+const AI_DETECTOR_NAMES = new Set(["local", "hive", "sightengine"]);
+
+const isInconclusiveLocal = (signal) => {
+  if (signal.name !== "local") return false;
+  const score = signal.ai_score ?? signal.manipulation_score;
+  return score != null && score >= LOCAL_INCONCLUSIVE_LOW && score <= LOCAL_INCONCLUSIVE_HIGH;
+};
+
 const signalTone = (signal) => {
   if (signal.status !== "ok") return "neutral";
+  if (isInconclusiveLocal(signal)) return "inconclusive";
   const score = signal.ai_score ?? signal.manipulation_score;
   if (score == null) return "neutral";
   return score >= FLAG_THRESHOLD ? "flag" : "clear";
@@ -148,11 +198,32 @@ const signalChipValue = (signal) => {
   return score != null ? formatPercent(score) : "—";
 };
 
+// Mirrors the backend's `_primary_ai_signals` (triangulate.py): the signals
+// whose mutual disagreement actually drove `aggregate.disagreement`, so the
+// UI can name them correctly instead of implying every check was compared.
+const primaryDisagreementSignals = (signals) =>
+  (signals ?? []).filter((s) => {
+    if (s.status !== "ok" || s.ai_score == null) return false;
+    if (s.signal_class !== "provenance" && s.signal_class !== "detector") return false;
+    if (s.name === "local" && s.raw?.was_tiled === true) return false;
+    return true;
+  });
+
+const disagreementLabel = (signals) => {
+  const primary = primaryDisagreementSignals(signals);
+  const names = new Set(primary.map((s) => s.name));
+  const isExternalApiOnly =
+    names.size > 0 && [...names].every((name) => name === "hive" || name === "sightengine");
+  return isExternalApiOnly ? "External API disagreement" : "Disagreement across independent checks";
+};
+
+// AI detectors only: local (excluding its inconclusive band), Hive, Sightengine.
+// ELA/EXIF/C2PA are manipulation/provenance checks, not AI-generation flags.
 const detectionRatio = (signals) => {
   const scored = (signals ?? []).filter(
-    (s) => s.status === "ok" && (s.ai_score != null || s.manipulation_score != null)
+    (s) => s.status === "ok" && AI_DETECTOR_NAMES.has(s.name) && s.ai_score != null && !isInconclusiveLocal(s)
   );
-  const flagged = scored.filter((s) => (s.ai_score ?? s.manipulation_score) >= FLAG_THRESHOLD);
+  const flagged = scored.filter((s) => s.ai_score >= FLAG_THRESHOLD);
   return { flagged: flagged.length, total: scored.length };
 };
 
@@ -191,10 +262,10 @@ const buildGuidance = (aggregate) => {
   } else {
     userSummary.push(
       verdict === "Likely Authentic"
-        ? "Veil's checks agree this image is very likely an authentic, unedited capture."
+        ? "This image is likely authentic based on the available technical signals."
         : "Veil did not find strong signs that this image is AI-generated."
     );
-    userSummary.push("This lowers the risk, but it does not prove the sender, story, or context is truthful.");
+    userSummary.push("This does not verify the sender, source, or surrounding context.");
     visualChecks.push("For high-stakes situations, still check hands, text, faces, shadows, reflections, and image source.");
     nextSteps.push("If money, credentials, or identity are involved, verify through another trusted channel.");
   }
@@ -244,6 +315,7 @@ function App() {
     [visualExplanation]
   );
   const ratio = useMemo(() => detectionRatio(scan?.envelope?.signals), [scan]);
+  const chipGroups = useMemo(() => groupChips(scan?.envelope?.signals), [scan]);
 
   useEffect(() => {
     try {
@@ -600,16 +672,29 @@ function App() {
 
               {ratio.total > 0 && (
                 <p className="ratio-line">
-                  <strong>{ratio.flagged}/{ratio.total}</strong> independent checks flagged this image
+                  {ratio.flagged > 0 ? (
+                    <>
+                      <strong>{ratio.flagged}/{ratio.total}</strong> AI detectors flagged this image
+                    </>
+                  ) : (
+                    "No strong AI-generation indicators detected."
+                  )}
                 </p>
               )}
 
               {scan.envelope?.signals?.length > 0 && (
-                <div className="signal-chip-row">
-                  {scan.envelope.signals.map((signal) => (
-                    <div className={`signal-chip ${signalTone(signal)}`} key={`chip-${signal.name}`}>
-                      <span className="signal-chip-name">{signal.name}</span>
-                      <span className="signal-chip-value">{signalChipValue(signal)}</span>
+                <div className="signal-chip-groups">
+                  {CHIP_GROUP_ORDER.filter((group) => chipGroups[group].length > 0).map((group) => (
+                    <div className="signal-chip-group" key={`chip-group-${group}`}>
+                      <span className="signal-chip-group-label">{CHIP_GROUP_LABEL[group]}</span>
+                      <div className="signal-chip-row">
+                        {chipGroups[group].map((signal) => (
+                          <div className={`signal-chip ${signalTone(signal)}`} key={`chip-${signal.name}`}>
+                            <span className="signal-chip-name">{signal.name}</span>
+                            <span className="signal-chip-value">{signalChipValue(signal)}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -664,7 +749,7 @@ function App() {
                 ))}
                 <li>Fused AI-generation score: {formatPercent(overallScore)}</li>
                 <li>Fused manipulation score: {formatPercent(manipulationScore)}</li>
-                <li>Disagreement across independent checks: {formatPercent(aggregate?.disagreement)}</li>
+                <li>{disagreementLabel(scan.envelope?.signals)}: {formatPercent(aggregate?.disagreement)}</li>
               </ul>
             </details>
           </section>

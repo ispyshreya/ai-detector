@@ -44,11 +44,15 @@ _TIMEOUT_SECONDS = 30.0
 # matches VEIL_CLIENT_PROMPT.md's VLM inspection list.
 _CATEGORY_QUESTIONS: dict[str, str] = {
     "Text/writing": (
-        "Look closely at any visible text or writing in this image. Is every word "
-        "spelled correctly and does it read as coherent, real language? Answer with "
-        "YES if all text is normal, or NO if you see specific garbled, misspelled, or "
-        "nonsensical text. If NO, state exactly which text and where it appears. If "
-        "there is no text in the image, answer YES."
+        "Look closely at any visible text or writing in this image. A short brand "
+        "name, logo, or ordinary printed word (e.g. on clothing, a sign, or a "
+        "label) is NORMAL even if it's stylized, out of context, or unfamiliar to "
+        "you -- do not flag it just for being short or a proper noun. Only answer "
+        "NO if the actual LETTER SHAPES are visibly malformed: warped, duplicated, "
+        "merged together, or replaced with nonsense characters. Answer with YES if "
+        "all text is normal (this includes ordinary readable words/logos), or NO "
+        "only if letters are visibly malformed. If NO, state exactly which text and "
+        "where it appears. If there is no text in the image, answer YES."
     ),
     "Hands/limbs/faces": (
         "Look closely at any hands, fingers, limbs, ears, teeth, or faces in this "
@@ -234,44 +238,41 @@ def parse_category_findings(responses: dict[str, str]) -> tuple[str, tuple[Findi
 def fallback_explanation(score: float | None) -> str:
     """No visual findings never gets to say "looks authentic" when the fused
     detector score already says otherwise -- that reads as a flat
-    contradiction next to a High Risk verdict. Only claim visual authenticity
-    when the score itself is low; otherwise stay neutral and defer to the
-    detector evidence, since a clean visual check doesn't clear a suspicious
-    score (modern generators often leave nothing visible to find)."""
+    contradiction next to a High Risk verdict. The headline is always the
+    same neutral abstention; only the follow-up context line changes with
+    the score, and it never claims certainty either way."""
+    headline = "No obvious visual AI-generation artifacts were identified."
     if score is None:
-        return (
-            "No clear visual artifacts were found.\n"
-            "- Image appearance alone cannot verify the sender, source, or surrounding story."
+        context = "Image appearance alone cannot verify the sender, source, or surrounding story."
+    elif score >= 0.4:
+        context = (
+            "This does not mean the image is authentic -- modern AI generators often leave no "
+            "visible trace, so weigh the detector score above more heavily than this visual check."
         )
-    if score >= 0.4:
-        return (
-            "No specific visual artifacts were found in this check, but that does not mean "
-            "the image is authentic.\n"
-            "- Modern AI generators often leave no visible trace -- weigh the detector score "
-            "above more heavily than this visual check for this image."
-        )
-    return (
-        "This looks visually authentic: no unusual text, anatomy, perspective, reflections, "
-        "or patterns were found.\n"
-        "- This is consistent with the low-risk detector score above."
-    )
+    else:
+        context = "This is consistent with the low-risk detector score above."
+    return f"{headline}\n- {context}"
 
 
 def format_explanation(
     assessment: str, findings: tuple[Finding, ...], score: float | None
 ) -> tuple[str, bool]:
-    """Render a plain-language, grounded lean -- "likely AI-generated because X"
-    when something concrete was found, "looks authentic" when nothing was --
-    not a neutral list of facts with no conclusion (that's what product wants:
-    a reasoned opinion tied to specific visible evidence, never a bare score
-    echo or a claim of certainty)."""
+    """Render a plain-language, grounded lean tied to the actual score
+    direction -- never say "likely AI-generated" when the fused score is low
+    (that flatly contradicts an Authentic/Low Risk verdict), even if a minor
+    visual detail was flagged. Product requirement: explanations must follow
+    the verdict, not just the VLM's own isolated (score-blind) read."""
     if assessment == "specific_artifacts_found" and findings:
-        headline = (
-            "This looks likely AI-generated or manipulated, based on what's visible:"
-        )
         bullets = "\n".join(
             f"- {finding.region}: {finding.observation}" for finding in findings
         )
+        if score is not None and score < 0.4:
+            headline = (
+                "A specific visual detail was noted below, though the overall technical "
+                "signals point toward this image being authentic:"
+            )
+        else:
+            headline = "This looks likely AI-generated or manipulated, based on what's visible:"
         return f"{headline}\n{bullets}", False
     return fallback_explanation(score), True
 

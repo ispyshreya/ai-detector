@@ -153,9 +153,9 @@ def test_manipulation_evidence_escalates_verdict_even_when_ai_axis_is_clean():
     assert any("manipulation" in r.lower() for r in aggregate.reasons)
 
 
-def test_resized_local_score_is_excluded_from_verdict_and_disagreement():
+def test_tiled_local_score_is_excluded_from_verdict_and_disagreement():
     """Regression: a real photo where sightengine/hive confidently agree it's
-    authentic must not be dragged to Inconclusive by a noisy resized-to-32x32
+    authentic must not be dragged to Inconclusive by a noisy tiled-to-32x32
     `local` read, even though local disagrees sharply on its own axis."""
     agreeing_only = [
         _signal("sightengine", SignalClass.detector, ai_score=0.0, confidence=0.99),
@@ -167,7 +167,7 @@ def test_resized_local_score_is_excluded_from_verdict_and_disagreement():
             SignalClass.detector,
             ai_score=0.87,
             confidence=0.55,
-            raw={"was_resized": True, "original_size": [2160, 3840], "training_native_size": [32, 32]},
+            raw={"was_tiled": True, "tile_count": 64, "original_size": [2160, 3840], "training_native_size": [32, 32]},
         ),
     ]
 
@@ -182,7 +182,7 @@ def test_resized_local_score_is_excluded_from_verdict_and_disagreement():
 
 
 def test_native_resolution_local_score_still_counts():
-    """Only the resized path is excluded -- a native 32x32 local result
+    """Only the tiled path is excluded -- a native 32x32 local result
     should still participate normally."""
     signals = [
         _signal(
@@ -190,7 +190,7 @@ def test_native_resolution_local_score_still_counts():
             SignalClass.detector,
             ai_score=0.9,
             confidence=0.8,
-            raw={"was_resized": False},
+            raw={"was_tiled": False, "tile_count": 1},
         ),
     ]
 
