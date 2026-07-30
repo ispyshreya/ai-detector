@@ -104,6 +104,8 @@ const SIGNAL_CATEGORY = {
   exif: "metadata",
   ela: "metadata",
   c2pa: "metadata",
+  faceswap: "metadata",
+  doctamper: "metadata",
   local: "local",
   sightengine: "api",
   hive: "api",
@@ -126,6 +128,8 @@ const CHIP_GROUP = {
   hive: "ai",
   sightengine: "ai",
   ela: "manipulation",
+  faceswap: "manipulation",
+  doctamper: "manipulation",
   exif: "provenance",
   c2pa: "provenance",
   reverse_search: "provenance",
@@ -316,6 +320,10 @@ function App() {
   );
   const ratio = useMemo(() => detectionRatio(scan?.envelope?.signals), [scan]);
   const chipGroups = useMemo(() => groupChips(scan?.envelope?.signals), [scan]);
+  const docTamperHeatmap = useMemo(
+    () => scan?.envelope?.signals?.find((s) => s.name === "doctamper")?.raw?.heatmap_png_b64 ?? null,
+    [scan]
+  );
 
   useEffect(() => {
     try {
@@ -621,6 +629,16 @@ function App() {
                   </div>
                 )}
               </div>
+
+              {docTamperHeatmap && (
+                <figure className="doc-heatmap">
+                  <img
+                    alt="Tamper heatmap — brighter regions changed most under recompression"
+                    src={`data:image/png;base64,${docTamperHeatmap}`}
+                  />
+                  <figcaption>Tamper heatmap — brighter = more likely edited. Verify with the issuer.</figcaption>
+                </figure>
+              )}
 
               <div className="explanation-card primary-explanation">
                 <p className="eyebrow">Why Veil rated this</p>

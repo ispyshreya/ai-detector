@@ -15,6 +15,7 @@ from io import BytesIO
 import pytest
 from PIL import Image, ImageDraw
 
+from app.config import get_settings
 from app.schemas import SignalStatus
 from app.signals.base import ImageInput
 from app.signals.local_model import (
@@ -38,6 +39,17 @@ from app.signals.local_model import (
     suppress_overlapping_patches,
     trimmed_mean,
 )
+
+
+@pytest.fixture(autouse=True)
+def _force_resnet_patch_pipeline(monkeypatch):
+    """This module exercises the legacy resnet + 32x32 patch-tiling path
+    specifically; local_model_type now defaults to "clip", which bypasses
+    patching entirely, so pin it back for these tests."""
+    monkeypatch.setenv("LOCAL_MODEL_TYPE", "resnet")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _solid(width: int, height: int, color=(128, 128, 128)) -> Image.Image:

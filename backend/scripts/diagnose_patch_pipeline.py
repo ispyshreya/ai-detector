@@ -13,8 +13,15 @@ Each argument is `path:LABEL` where LABEL is REAL or AI.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+# This tool is specifically about the legacy CIFAKE-resnet patch pipeline
+# (see local_model.py's module docstring); local_model_type now defaults to
+# "clip", which bypasses patching entirely, so force the resnet path here
+# regardless of the environment's .env.
+os.environ["LOCAL_MODEL_TYPE"] = "resnet"
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/
 

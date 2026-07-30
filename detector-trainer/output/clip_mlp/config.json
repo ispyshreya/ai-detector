@@ -1,0 +1,8 @@
+{
+  "backbone_name": "ViT-L-14",
+  "feat_dim": 768,
+  "head_type": "mlp",
+  "hidden": 256,
+  "image_size": 224,
+  "input_normalization": "imagenet"
+}

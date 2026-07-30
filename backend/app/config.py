@@ -40,12 +40,25 @@ class Settings(BaseSettings):
     ai_or_not_api_key: str | None = None
 
     # --- Local trained detector ---
-    local_model_checkpoint: str = str(REPO_ROOT / "detector-trainer" / "output" / "best_model.pt")
-    local_model_name: str = "resnet50_dropout"
+    # Serves the retrained frozen-CLIP + MLP head winner (3% real-photo FPR),
+    # not the old overfit ResNet. Flip local_model_type back to "resnet" to serve
+    # a resnet50_dropout checkpoint via the legacy 32x32 patch-tiling pipeline
+    # instead (see signals/local_model.py for why the two types run differently).
+    local_model_type: str = "clip"
+    local_model_checkpoint: str = str(
+        REPO_ROOT / "detector-trainer" / "output" / "clip_mlp" / "clip_head_best.pt"
+    )
+    local_model_name: str = "clip_mlp"
+    local_model_threshold: float = 0.57  # calibrated for ~2% real-photo FPR
+    # Legacy resnet path only (local_model_type = "resnet"); unused by clip.
+    local_model_resnet_checkpoint: str = str(
+        REPO_ROOT / "detector-trainer" / "output" / "best_model.pt"
+    )
+    local_model_resnet_name: str = "resnet50_dropout"
     # When true, SignalResult.raw["debug"] on the `local` signal includes full
     # per-patch coordinates/scores and aggregate stats (mean/median/top-20%/
-    # etc). Off by default so the normal envelope stays lean -- this can get
-    # large for a big image's patch grid. See signals/local_model.py.
+    # etc), for the resnet patch-tiling path only. Off by default so the normal
+    # envelope stays lean -- this can get large for a big image's patch grid.
     local_model_debug: bool = False
 
     # --- Forensic / context services ---
@@ -56,6 +69,23 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-opus-4-8"
     vlm_model_id: str = "hive/vision-language-model"
     vlm_max_new_tokens: int = 220
+
+    # --- Face-swap / deepfake-face signal ---
+    faceswap_enabled: bool = True
+    faceswap_model_id: str = "prithivMLmods/Deep-Fake-Detector-v2-Model"
+    faceswap_threshold: float = 0.80  # locked by the acceptance gate (2026-07-29):
+    # catches the Curry composite (0.873) while all reference genuine faces stay
+    # below (max 0.744, the driver's-license photo). Thin margin on documents.
+
+    # --- Document-tamper signal ---
+    doctamper_enabled: bool = True
+    doctamper_threshold: float = 0.60  # acceptance gate (2026-07-29): INDICATOR-ONLY.
+    # ELA cannot separate real edits from ordinary recompression — a synthetic
+    # field edit scored 0.044 vs 0.024-0.036 for genuine/scanned/recompressed
+    # copies (all near the noise floor). 0.60 is far above any of these, so the
+    # heatmap always shows on documents but the verdict never elevates in practice.
+    doctamper_doc_gate_threshold: float = 0.55  # CLIP doc-vs-photo probability to treat as a document
+    doctamper_backbone: str = "ViT-L-14"  # CLIP backbone for the document-gate (weights cached by the local signal)
 
     # --- Behavior ---
     signal_timeout_seconds: float = 6.0  # per-signal cap; supports p95 < 6s goal

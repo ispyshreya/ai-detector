@@ -180,6 +180,40 @@ def _load_build_model():
     return module.build_model
 
 
+def _load_clip_builder():
+    """Dynamically load ``build_clip_detector`` from the detector-trainer package.
+
+    Mirrors :func:`_load_build_model`; kept separate so the CLIP path (frozen
+    ViT-L/14 + trained head) can be swapped in without importing open_clip until
+    a CLIP checkpoint is actually served.
+    """
+    clip_path = REPO_ROOT / "detector-trainer" / "models" / "clip_head.py"
+    if not clip_path.exists():
+        raise FileNotFoundError("detector-trainer/models/clip_head.py was not found")
+
+    spec = importlib.util.spec_from_file_location("veil_clip_head", clip_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load {clip_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module.build_clip_detector
+
+
+def _confidence(ai_score: float, threshold: float) -> float:
+    """Confidence as normalized distance from the calibrated decision boundary.
+
+    0.0 exactly at the threshold (maximally uncertain), rising to 1.0 at either
+    extreme. Pivoting on the calibrated threshold — not a hardcoded 0.5 — means a
+    real photo scoring just under the boundary reads as confidently REAL.
+    """
+    threshold = min(max(threshold, 1e-6), 1.0 - 1e-6)
+    if ai_score >= threshold:
+        return (ai_score - threshold) / (1.0 - threshold)
+    return (threshold - ai_score) / threshold
+
+
 def _eval_transform():
     """Byte-for-byte the training/eval contract (see module docstring)."""
     return transforms.Compose([
@@ -193,19 +227,33 @@ def _load_model():
     global _MODEL, _DEVICE, _CHECKPOINT
 
     settings = get_settings()
-    checkpoint = _resolve_checkpoint(settings.local_model_checkpoint)
+    model_type = getattr(settings, "local_model_type", "resnet")
+    checkpoint = _resolve_checkpoint(
+        settings.local_model_checkpoint if model_type == "clip"
+        else settings.local_model_resnet_checkpoint
+    )
     if _MODEL is not None and _CHECKPOINT == checkpoint:
         return _MODEL, _DEVICE, checkpoint
 
     if not checkpoint.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
 
-    build_model = _load_build_model()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_model(settings.local_model_name, pretrained=False)
-    model.load_state_dict(torch.load(checkpoint, map_location=device))
-    model = model.to(device)
-    model.eval()
+
+    if model_type == "clip":
+        # Frozen CLIP ViT-L/14 + trained head. The head checkpoint's sibling
+        # config.json records {backbone_name, feat_dim, head_type, hidden}.
+        build_clip_detector = _load_clip_builder()
+        config_path = checkpoint.parent / "config.json"
+        model = build_clip_detector(
+            config=config_path, head_ckpt=checkpoint, device=str(device)
+        )
+    else:
+        build_model = _load_build_model()
+        model = build_model(settings.local_model_resnet_name, pretrained=False)
+        model.load_state_dict(torch.load(checkpoint, map_location=device))
+        model = model.to(device)
+        model.eval()
 
     _MODEL = model
     _DEVICE = device
@@ -478,7 +526,13 @@ class LocalModelSignal(Signal):
     signal_class = SignalClass.detector
 
     def available(self) -> bool:
-        return _resolve_checkpoint(get_settings().local_model_checkpoint).exists()
+        settings = get_settings()
+        checkpoint = (
+            settings.local_model_checkpoint
+            if getattr(settings, "local_model_type", "resnet") == "clip"
+            else settings.local_model_resnet_checkpoint
+        )
+        return _resolve_checkpoint(checkpoint).exists()
 
     async def analyze(self, image: ImageInput) -> SignalResult:
         started = time.perf_counter()
@@ -488,13 +542,67 @@ class LocalModelSignal(Signal):
         except UnidentifiedImageError:
             return self._error_result("uploaded file is not a valid image", started)
 
-        original_size = pil_image.size
-        was_patched = original_size != TRAINING_NATIVE_SIZE
-
         try:
             model, device, checkpoint = _load_model()
         except Exception as exc:  # noqa: BLE001 - report as signal failure
             return self._error_result(str(exc), started)
+
+        if getattr(get_settings(), "local_model_type", "resnet") == "clip":
+            return await self._analyze_clip(pil_image, model, device, checkpoint, started)
+        return await self._analyze_resnet_patches(pil_image, model, device, checkpoint, started)
+
+    async def _analyze_clip(self, pil_image, model, device, checkpoint, started: float) -> SignalResult:
+        """Single whole-image pass through the CLIP ViT-L/14 + trained head.
+
+        Unlike the resnet path below, this model was trained and threshold-
+        calibrated directly on full real-world photos (not CIFAKE's native
+        32x32 scenes), so it needs no patch-tiling workaround -- and it is NOT
+        an unvalidated heuristic, so `was_tiled` is always False here and this
+        score DOES count toward the fused verdict (see `_is_unvalidated_resize`
+        in engine/triangulate.py, which only ever excludes the resnet path).
+        """
+        settings = get_settings()
+        try:
+            tensor = await asyncio.to_thread(
+                lambda: _eval_transform()(pil_image).unsqueeze(0).to(device)
+            )
+            with torch.no_grad():
+                ai_score = torch.sigmoid(model(tensor)).item()
+        except Exception as exc:  # noqa: BLE001 - never let this signal crash the scan
+            return self._error_result(f"clip inference failed: {exc}", started)
+
+        threshold = float(getattr(settings, "local_model_threshold", 0.5))
+        confidence = _confidence(ai_score, threshold)
+        latency_ms = (time.perf_counter() - started) * 1000.0
+
+        return SignalResult(
+            name=self.name,
+            signal_class=self.signal_class,
+            status=SignalStatus.ok,
+            ai_score=max(0.0, min(1.0, float(ai_score))),
+            manipulation_score=None,
+            confidence=max(0.0, min(1.0, float(confidence))),
+            latency_ms=latency_ms,
+            notes=[
+                f"Local {settings.local_model_name} fake/AI likelihood {round(ai_score * 100)}%"
+                f" (decision threshold {threshold:.2f}, calibrated for a low real-photo false-positive rate).",
+                f"Checkpoint: {checkpoint}",
+            ],
+            raw={
+                "checkpoint": str(checkpoint),
+                "model": settings.local_model_name,
+                "model_type": "clip",
+                "threshold": threshold,
+                "was_tiled": False,
+            },
+        )
+
+    async def _analyze_resnet_patches(self, pil_image, model, device, checkpoint, started: float) -> SignalResult:
+        """Legacy path: the CIFAKE-trained resnet, served via the overlapping
+        32x32 patch pipeline (see module docstring). Kept for local_model_type
+        = "resnet"; superseded by `_analyze_clip` in production."""
+        original_size = pil_image.size
+        was_patched = original_size != TRAINING_NATIVE_SIZE
 
         try:
             pipeline_result = await asyncio.to_thread(run_patch_pipeline, pil_image, model, device)
@@ -511,7 +619,7 @@ class LocalModelSignal(Signal):
         latency_ms = (time.perf_counter() - started) * 1000.0
 
         notes = [
-            f"Local {get_settings().local_model_name} fake/AI likelihood {round(ai_score * 100)}%"
+            f"Local {get_settings().local_model_resnet_name} fake/AI likelihood {round(ai_score * 100)}%"
             f" (blended from {len(patches)} patch{'es' if len(patches) != 1 else ''})",
             f"Checkpoint: {checkpoint}",
         ]
@@ -526,7 +634,8 @@ class LocalModelSignal(Signal):
 
         raw: dict = {
             "checkpoint": str(checkpoint),
-            "model": get_settings().local_model_name,
+            "model": get_settings().local_model_resnet_name,
+            "model_type": "resnet",
             "was_tiled": was_patched,
             "tile_count": len(patches),
             "max_tile_score": round(aggregate.max_score, 4),

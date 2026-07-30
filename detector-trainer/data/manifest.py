@@ -168,17 +168,24 @@ def split(
     val_frac: float = 0.15,
     test_indist_frac: float = 0.15,
     seed: int = 42,
+    wild_sources: Iterable[str] = (),
+    wild_generators: Iterable[str] = WILD_GENERATORS,
 ) -> pd.DataFrame:
     """Group-aware split by generator/source.
 
     Rules (design spec §3):
-    - Rows whose ``generator`` is in :data:`WILD_GENERATORS` go ONLY to
-      ``test_wild`` and are never placed in train/val/test_indist.
+    - Rows whose ``generator`` is in ``wild_generators`` (default
+      :data:`WILD_GENERATORS`) go ONLY to ``test_wild`` and are never placed in
+      train/val/test_indist. Narrow this (e.g. to just ``("midjourney",)``) to
+      fold previously-held-out generators like flux/dalle3 into training.
     - Everything else (real images + training generators) is split into
       ``train`` / ``val`` / ``test_indist``.
 
     The split is performed per ``(generator, source)`` group so each pool stays
     balanced across generators, and it is deterministic under ``seed``.
+
+    ``wild_sources`` routes named real sources to ``test_wild`` so real-world reals
+    can be held out of training and scored honestly for false positives.
     """
     if df.empty:
         return df.assign(split=pd.Series(dtype="object"))
@@ -186,7 +193,9 @@ def split(
     out = df.copy().reset_index(drop=True)
     out["split"] = ""
 
-    is_wild = out["generator"].isin(WILD_GENERATORS)
+    wild_sources = set(wild_sources)
+    wild_generators = set(wild_generators)
+    is_wild = out["generator"].isin(wild_generators) | out["source"].isin(wild_sources)
     out.loc[is_wild, "split"] = "test_wild"
 
     rng = random.Random(seed)
@@ -309,8 +318,16 @@ def build_manifest(
     test_indist_frac: float = 0.15,
     seed: int = 42,
     do_dedup: bool = True,
+    wild_sources: Iterable[str] = (),
+    wild_generators: Iterable[str] = WILD_GENERATORS,
 ) -> pd.DataFrame:
-    """Run the full pipeline: ingest → clean → dedup → split."""
+    """Run the full pipeline: ingest → clean → dedup → split.
+
+    `wild_sources` routes named real sources to `test_wild` so real-world reals
+    can be held out of training and scored honestly for false positives.
+    `wild_generators` selects which fake generators are held out of training
+    (default holds out midjourney/dalle3/flux; narrow it to train on some).
+    """
     df = ingest_sources(sources)
     df = clean(df)
     if do_dedup:
@@ -320,6 +337,8 @@ def build_manifest(
         val_frac=val_frac,
         test_indist_frac=test_indist_frac,
         seed=seed,
+        wild_sources=wild_sources,
+        wild_generators=wild_generators,
     )
     return df[MANIFEST_COLUMNS].reset_index(drop=True)
 

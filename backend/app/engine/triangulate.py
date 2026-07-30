@@ -38,20 +38,36 @@ from app.schemas import Aggregate, SignalClass, SignalResult, SignalStatus
 _CLASS_WEIGHT: dict[SignalClass, float] = {
     SignalClass.provenance: 1.0,
     SignalClass.detector: 0.8,
+    SignalClass.manipulation: 0.8,  # learned face-swap / doc-tamper classifiers -- same
+    # trust tier as a general AI-generation detector, just scored on Axis 2.
     SignalClass.forensic: 0.35,
     SignalClass.context: 0.0,
 }
 
-# Per-signal-name discount on top of the class weight. The in-house `local`
-# checkpoint is only validated on 32x32 CIFAKE crops (it skips itself outside
-# that domain — see local_model.py) and has not been evaluated on the
-# representative datasets the client prompt's Quality Standard requires. A
-# single confident `local` result alone must not be able to carry a verdict,
-# so it is discounted relative to commercial detectors with broader (if still
-# imperfect) validation.
+# Per-signal-name discount on top of the class weight. The legacy `local`
+# resnet checkpoint is only validated on 32x32 CIFAKE crops (it skips itself
+# outside that domain via the patch pipeline -- see local_model.py) and has
+# not been evaluated on the representative datasets the client prompt's
+# Quality Standard requires, so a single confident result alone must not be
+# able to carry a verdict. The CLIP+head replacement (local_model_type =
+# "clip") IS trained and threshold-calibrated directly on real-world photos
+# with an explicit real-photo false-positive target, so it does not get this
+# discount -- see `_local_reliability`.
 _RELIABILITY_OVERRIDE: dict[str, float] = {
     "local": 0.6,
 }
+
+
+def _local_reliability(signal: SignalResult) -> float:
+    """`local`'s reliability override, waived for the validated CLIP path.
+
+    `_RELIABILITY_OVERRIDE` alone can't express this because it only keys off
+    the signal name, and both model backends report as `name == "local"`."""
+    if signal.name != "local":
+        return 1.0
+    if isinstance(signal.raw, dict) and signal.raw.get("model_type") == "clip":
+        return 1.0
+    return _RELIABILITY_OVERRIDE.get(signal.name, 1.0)
 
 _DEFAULT_SIGNAL_CONFIDENCE = 0.5  # used only if a signal omits self-reported confidence
 
@@ -102,7 +118,7 @@ def _weight(signal: SignalResult) -> float:
     if _is_unvalidated_resize(signal):
         return 0.0
     class_weight = _CLASS_WEIGHT.get(signal.signal_class, 0.0)
-    override = _RELIABILITY_OVERRIDE.get(signal.name, 1.0)
+    override = _local_reliability(signal)
     confidence = signal.confidence if signal.confidence is not None else _DEFAULT_SIGNAL_CONFIDENCE
     return class_weight * override * confidence
 

@@ -212,6 +212,80 @@ def test_write_report_creates_markdown_and_plots(tmp_path=None):
 
 
 # --------------------------------------------------------------------------- #
+# Real-photo false-positive metrics
+# --------------------------------------------------------------------------- #
+def test_real_photo_fpr_and_specificity():
+    preds = pd.DataFrame(
+        {
+            "path": [f"p{i}" for i in range(6)],
+            "generator": ["real"] * 4 + ["flux", "flux"],
+            "split": ["test_wild"] * 6,
+            "label": [0, 0, 0, 0, 1, 1],
+            # 2 of 4 reals wrongly scored >= 0.5
+            "score": [0.1, 0.2, 0.8, 0.9, 0.7, 0.9],
+        },
+        columns=harness.PREDICTION_COLUMNS,
+    )
+    assert harness.real_photo_false_positive_rate(preds, 0.5) == 0.5
+    assert harness.real_photo_specificity(preds, 0.5) == 0.5
+
+
+def test_real_photo_fpr_no_reals_is_nan():
+    preds = pd.DataFrame(
+        {
+            "path": ["a"],
+            "generator": ["flux"],
+            "split": ["test_wild"],
+            "label": [1],
+            "score": [0.9],
+        },
+        columns=harness.PREDICTION_COLUMNS,
+    )
+    assert np.isnan(harness.real_photo_false_positive_rate(preds, 0.5))
+
+
+def test_select_threshold_hits_target_real_fpr():
+    reals = pd.DataFrame(
+        {
+            "path": [f"r{i}" for i in range(100)],
+            "generator": ["real"] * 100,
+            "split": ["test_wild"] * 100,
+            "label": [0] * 100,
+            "score": list(np.linspace(0.0, 1.0, 100)),
+        },
+        columns=harness.PREDICTION_COLUMNS,
+    )
+    t = harness.select_threshold_for_target_fpr(reals, target_fpr=0.05)
+    assert harness.real_photo_false_positive_rate(reals, t) <= 0.05
+    assert 0.9 <= t <= 1.0
+
+
+def test_report_includes_real_photo_fpr(tmp_path=None):
+    import tempfile
+
+    out_dir = Path(tmp_path) if tmp_path else Path(tempfile.mkdtemp())
+    preds = _synthetic_predictions()
+    report_path = harness.write_report({"resnet50": preds}, out_dir)
+    text = report_path.read_text()
+    assert "Real-photo false positives" in text
+    assert "real_fpr" in text
+
+
+def test_write_operating_point(tmp_path=None):
+    import json
+    import tempfile
+
+    out_dir = Path(tmp_path) if tmp_path else Path(tempfile.mkdtemp())
+    preds = _synthetic_predictions()
+    path = harness.write_operating_point(preds, out_dir, target_fpr=0.05)
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert set(data) >= {"threshold", "target_fpr", "real_fpr_at_threshold"}
+    assert 0.0 < data["threshold"] < 1.0
+    assert data["real_fpr_at_threshold"] <= 0.05 + 1e-9
+
+
+# --------------------------------------------------------------------------- #
 # Plain runner (no pytest required)
 # --------------------------------------------------------------------------- #
 def _run_all():

@@ -784,6 +784,31 @@ h2 {
   font-size: 12px;
 }
 
+.doc-heatmap {
+  grid-column: 1 / -1;
+  padding: clamp(20px, 2.4vw, 28px);
+  border: 1px solid var(--amber);
+  border-radius: 14px;
+  background: var(--amber-soft);
+  margin: 0;
+}
+
+.doc-heatmap img {
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  border-radius: 10px;
+  display: block;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.doc-heatmap figcaption {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--amber);
+}
+
 .explanation-card {
   padding: clamp(20px, 2.4vw, 28px);
   border: 1px solid var(--border);

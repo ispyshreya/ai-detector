@@ -55,6 +55,18 @@ def all_signals() -> list[Signal]:
     except Exception:  # noqa: BLE001
         pass
 
+    try:
+        from app.signals.faceswap import FaceSwapSignal
+        signals.append(FaceSwapSignal())
+    except Exception:  # noqa: BLE001 - never let one signal break the registry
+        pass
+
+    try:
+        from app.signals.doctamper import DocTamperSignal
+        signals.append(DocTamperSignal())
+    except Exception:  # noqa: BLE001 - never let one signal break the registry
+        pass
+
     return signals
 
 

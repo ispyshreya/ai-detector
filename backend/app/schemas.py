@@ -21,6 +21,7 @@ class SignalClass(str, Enum):
     forensic = "forensic"        # pixel/metadata forensics
     provenance = "provenance"    # cryptographic / watermark provenance
     context = "context"          # external context (e.g. reverse search)
+    manipulation = "manipulation"  # learned face-swap / composite detector
 
 
 class SignalStatus(str, Enum):

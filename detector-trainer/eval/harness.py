@@ -253,6 +253,72 @@ def _validate_predictions(predictions: pd.DataFrame) -> None:
         raise ValueError(f"predictions missing columns: {missing}")
 
 
+def real_photo_false_positive_rate(
+    predictions: pd.DataFrame, threshold: float = DEFAULT_THRESHOLD
+) -> float:
+    """Fraction of REAL images wrongly scored FAKE (score >= threshold).
+
+    The headline number for the real-photo false-positive bug: genuine selfies
+    and phone photos that the detector flags as AI-generated. NaN if there are
+    no real images in `predictions`.
+    """
+    _validate_predictions(predictions)
+    reals = predictions[predictions["label"] == 0]
+    if len(reals) == 0:
+        return float("nan")
+    fp = int((reals["score"] >= threshold).sum())
+    return float(fp / len(reals))
+
+
+def real_photo_specificity(
+    predictions: pd.DataFrame, threshold: float = DEFAULT_THRESHOLD
+) -> float:
+    """Fraction of REAL images correctly scored REAL (score < threshold). NaN if none."""
+    fpr = real_photo_false_positive_rate(predictions, threshold)
+    return float("nan") if np.isnan(fpr) else 1.0 - fpr
+
+
+def select_threshold_for_target_fpr(
+    predictions: pd.DataFrame,
+    target_fpr: float = 0.02,
+    grid: int = 199,
+) -> float:
+    """Lowest decision threshold whose real-photo FPR is <= `target_fpr`.
+
+    Scans thresholds in (0, 1) low→high and returns the first that keeps real
+    false positives at/below the target. Lower thresholds keep more FAKE recall,
+    so the first qualifying threshold is the best trade. Falls back to the
+    strictest candidate if none meets the target.
+    """
+    _validate_predictions(predictions)
+    candidates = np.linspace(0.005, 0.995, grid)
+    best = float(candidates[-1])
+    for t in candidates:
+        if real_photo_false_positive_rate(predictions, float(t)) <= target_fpr:
+            best = float(t)
+            break
+    return best
+
+
+def write_operating_point(
+    predictions: pd.DataFrame, out_dir, target_fpr: float = 0.02
+) -> Path:
+    """Choose and persist the decision threshold that meets the real-FPR target."""
+    import json
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    threshold = select_threshold_for_target_fpr(predictions, target_fpr=target_fpr)
+    payload = {
+        "threshold": threshold,
+        "target_fpr": float(target_fpr),
+        "real_fpr_at_threshold": real_photo_false_positive_rate(predictions, threshold),
+    }
+    path = out_dir / "operating_point.json"
+    path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
 # --------------------------------------------------------------------------- #
 # 4. Robustness eval (panel 3) — JPEG compression + downscaling
 # --------------------------------------------------------------------------- #
@@ -532,6 +598,27 @@ def write_report(
         m = summary_metrics(subset["score"], subset["label"], threshold)
         id_rows.append({"model": name, **m})
     lines.append(_md_table(pd.DataFrame(id_rows)))
+    lines.append("")
+
+    # Real-photo false positives — the headline correctness number for the
+    # false-positive bug. Reported on the in-dist reals and the held-out wild
+    # reals separately so real-world generalization is visible.
+    lines.append("### Real-photo false positives")
+    lines.append("")
+    lines.append("Fraction of REAL images wrongly scored FAKE (lower is better).")
+    lines.append("")
+    fpr_rows = []
+    for name, preds in predictions_by_model.items():
+        indist = preds[preds["split"] == in_dist_split]
+        wild = preds[preds["split"] == "test_wild"]
+        fpr_rows.append(
+            {
+                "model": name,
+                "real_fpr_indist": real_photo_false_positive_rate(indist, threshold),
+                "real_fpr_wild": real_photo_false_positive_rate(wild, threshold),
+            }
+        )
+    lines.append(_md_table(pd.DataFrame(fpr_rows)))
     lines.append("")
 
     # Panel 2: cross-generator per-generator (headline).

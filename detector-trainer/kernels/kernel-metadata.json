@@ -10,7 +10,9 @@
   "enable_internet": true,
   "dataset_sources": [
     "sarthakhans01/veil-detector-code",
-    "cartografia/unbiased-tiny-genimage"
+    "cartografia/unbiased-tiny-genimage",
+    "sarthakhans01/veil-detector-reals",
+    "sarthakhans01/veil-detector-wild-fakes"
   ],
   "competition_sources": [],
   "kernel_sources": [],

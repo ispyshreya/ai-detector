@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 import time
+from dataclasses import dataclass
 
 from PIL import Image, ImageChops, UnidentifiedImageError
 
@@ -35,13 +36,34 @@ from app.signals.base import ImageInput, Signal
 # that re-saved/spliced regions stand out.
 _QUALITY = 90
 
-# Normalization anchors (see _to_manipulation_score). Difference values are in
+# Normalization anchors (see to_manipulation_score). Difference values are in
 # 0..255 per channel. Untouched, uniformly-compressed images typically show a
 # small mean diff and a modest max; edited images push both up, especially the
 # mean (broad, uneven error). These thresholds are deliberately rough — ELA is a
 # soft heuristic, not a calibrated detector.
 _MEAN_DIFF_FULL_SCALE = 18.0   # mean diff at/above this reads as strongly uneven
 _MAX_DIFF_FULL_SCALE = 200.0   # max diff at/above this reads as a sharp edit edge
+
+
+@dataclass
+class ElaResult:
+    diff: "Image.Image"
+    mean_diff: float
+    max_diff: float
+
+
+def compute_ela(image: "Image.Image", quality: int = _QUALITY) -> ElaResult:
+    """Recompress at `quality`, return the per-pixel diff image + mean/max diff."""
+    original = image.convert("RGB")
+    buffer = io.BytesIO()
+    original.save(buffer, format="JPEG", quality=quality)
+    buffer.seek(0)
+    recompressed = Image.open(buffer).convert("RGB")
+    diff = ImageChops.difference(original, recompressed)
+    max_diff = float(max(hi for (_lo, hi) in diff.getextrema()))
+    band_means = _band_means(diff)
+    mean_diff = sum(band_means) / len(band_means)
+    return ElaResult(diff=diff, mean_diff=mean_diff, max_diff=max_diff)
 
 
 class ElaSignal(Signal):
@@ -68,26 +90,10 @@ class ElaSignal(Signal):
                 notes=[f"Not a parseable image for ELA: {exc}"],
             )
 
-        # Recompress to JPEG at a known quality, then reopen the result.
-        buffer = io.BytesIO()
-        original.save(buffer, format="JPEG", quality=_QUALITY)
-        buffer.seek(0)
-        recompressed = Image.open(buffer).convert("RGB")
+        res = compute_ela(original, _QUALITY)
+        max_diff, mean_diff = res.max_diff, res.mean_diff
 
-        # Per-pixel absolute difference between the original and the recompressed
-        # copy. The bands' extrema/mean summarize the "error level" surface.
-        diff = ImageChops.difference(original, recompressed)
-
-        # extrema() returns (min, max) per band; take the largest max across bands.
-        max_diff = float(max(hi for (_lo, hi) in diff.getextrema()))
-
-        # Mean absolute difference across all channels (a single 0..255 number).
-        # diff.convert("L") would re-weight channels; averaging the per-band means
-        # keeps every channel equal, which is what we want for raw error level.
-        band_means = _band_means(diff)
-        mean_diff = sum(band_means) / len(band_means)
-
-        manipulation_score = _to_manipulation_score(mean_diff, max_diff)
+        manipulation_score = to_manipulation_score(mean_diff, max_diff)
 
         notes = [
             f"ELA at JPEG quality {_QUALITY}: mean diff {mean_diff:.2f}, "
@@ -131,7 +137,7 @@ def _band_means(diff: Image.Image) -> list[float]:
     return means
 
 
-def _to_manipulation_score(mean_diff: float, max_diff: float) -> float:
+def to_manipulation_score(mean_diff: float, max_diff: float) -> float:
     """Map ELA difference statistics to a manipulation likelihood in [0, 1].
 
     Higher and more uneven error levels -> higher manipulation_score. We blend

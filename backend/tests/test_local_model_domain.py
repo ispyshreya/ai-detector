@@ -1,11 +1,24 @@
 import asyncio
 from io import BytesIO
 
+import pytest
 from PIL import Image
 
+from app.config import get_settings
 from app.schemas import SignalStatus
 from app.signals.base import ImageInput
 from app.signals.local_model import MAX_PATCHES, LocalModelSignal
+
+
+@pytest.fixture(autouse=True)
+def _force_resnet_patch_pipeline(monkeypatch):
+    """This module exercises the legacy resnet + 32x32 patch-tiling path
+    specifically (see local_model.py); local_model_type now defaults to
+    "clip", which bypasses patching entirely, so pin it back for these tests."""
+    monkeypatch.setenv("LOCAL_MODEL_TYPE", "resnet")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _jpeg(width: int, height: int) -> bytes:

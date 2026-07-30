@@ -32,3 +32,6 @@ detector-trainer/data/raw/
 
 # Generated wild-set images
 detector-trainer/wild_data/
+
+# Acquired real-world images (downloaded by acquire_reals.py)
+detector-trainer/real_world/

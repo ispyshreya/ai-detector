@@ -18,6 +18,7 @@ SUITES = [
     "models/test_resnet.py",
     "models/test_clip_head.py",
     "eval/test_harness.py",
+    "test_run_pipeline.py",
 ]
 
 
