@@ -21,6 +21,14 @@ from app.signals.base import ImageInput, Signal
 
 _DOC_GATE = None  # cached doc-gate callable
 
+_DOC_PROMPTS = [
+    # document class (index 0): P(document) = softmax prob over these
+    "a photo of a document, ID card, passport, form, invoice, or bank statement",
+    # non-document classes: ordinary photos that should be rejected
+    "an ordinary photograph of a person, place, animal, or object",
+    "a photo of scenery, nature, animals, food, sports, or everyday life",
+]
+
 
 @dataclass
 class TamperResult:
@@ -34,8 +42,37 @@ def _should_flag(score: float | None, threshold: float) -> bool:
 
 
 def _load_doc_gate() -> Callable[[Image.Image], float]:
-    """Return gate(pil) -> P(document). Implemented in Task 4."""
-    raise NotImplementedError("document-gate wired in Task 4")
+    """Return gate(pil) -> P(document) via CLIP zero-shot over _DOC_PROMPTS.
+
+    _DOC_PROMPTS[0] is the single document-class prompt; P(document) = softmax
+    prob at index 0 (i.e. competing against all non-document prompts that follow).
+    Cached in module-level _DOC_GATE after first call.
+    """
+    global _DOC_GATE
+    if _DOC_GATE is not None:
+        return _DOC_GATE
+    import torch
+    import open_clip
+
+    backbone = getattr(get_settings(), "doctamper_backbone", "ViT-L-14")
+    model, _, preprocess = open_clip.create_model_and_transforms(backbone, pretrained="openai")
+    model.eval()
+    tokenizer = open_clip.get_tokenizer(backbone)
+    text = tokenizer(_DOC_PROMPTS)
+    with torch.no_grad():
+        text_features = model.encode_text(text)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+
+    def gate(pil: Image.Image) -> float:
+        with torch.no_grad():
+            img = preprocess(pil.convert("RGB")).unsqueeze(0)
+            feats = model.encode_image(img)
+            feats = feats / feats.norm(dim=-1, keepdim=True)
+            probs = (100.0 * feats @ text_features.T).softmax(dim=-1)
+            return float(probs[0, 0])  # P(document) = prob of first prompt
+
+    _DOC_GATE = gate
+    return _DOC_GATE
 
 
 def _localize_tamper(pil: Image.Image) -> "TamperResult":

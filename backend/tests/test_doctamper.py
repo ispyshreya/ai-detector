@@ -1,3 +1,4 @@
+import pytest
 from app.config import get_settings
 
 
@@ -94,3 +95,19 @@ async def test_loader_failure_is_reported_not_raised(monkeypatch):
 def test_doctamper_registered():
     from app.signals.registry import all_signals
     assert any(s.name == "doctamper" for s in all_signals())
+
+
+import os
+
+_REF = os.path.expanduser("~/Downloads/photos")
+_has_ref = os.path.isdir(_REF)
+
+
+@pytest.mark.skipif(not _has_ref, reason="reference images not present")
+def test_doc_gate_ranks_document_over_photo():
+    gate = dt._load_doc_gate()
+    # The driver's-license capture is document-like; the bicycle is a plain photo.
+    doc = Image.open(os.path.join(_REF, "WhatsApp Image 2026-06-14 at 12.05.14.jpeg")).convert("RGB")
+    photo = Image.open(os.path.join(_REF, "real_ai_demo_1_bicycle.jpg")).convert("RGB")
+    assert gate(doc) > gate(photo)
+    assert gate(photo) < 0.55   # a plain photo is rejected by the default gate threshold
