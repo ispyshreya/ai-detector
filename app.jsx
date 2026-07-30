@@ -141,6 +141,8 @@ const buildComparison = (detectors) => {
 
   const docTamperScore = detectors.doctamper?.deepfake ?? null;   // manipulation_score
   // Keep DOC_TAMPER_THRESHOLD in sync with backend doctamper_threshold (config.py).
+  // Acceptance gate (2026-07-29): indicator-only — heatmap shown, verdict doesn't
+  // elevate in practice (ELA scores sit ~0.02-0.04, far below 0.60).
   const DOC_TAMPER_THRESHOLD = 0.60;
   const documentEdit = docTamperScore != null && docTamperScore >= DOC_TAMPER_THRESHOLD;
   const docHeatmap = detectors.doctamper?.raw?.heatmap_png_b64 ?? null;

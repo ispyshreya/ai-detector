@@ -65,7 +65,11 @@ class Settings(BaseSettings):
 
     # --- Document-tamper signal ---
     doctamper_enabled: bool = True
-    doctamper_threshold: float = 0.60  # tuned by the acceptance gate; set >1.0 for indicator-only
+    doctamper_threshold: float = 0.60  # acceptance gate (2026-07-29): INDICATOR-ONLY.
+    # ELA cannot separate real edits from ordinary recompression — a synthetic
+    # field edit scored 0.044 vs 0.024-0.036 for genuine/scanned/recompressed
+    # copies (all near the noise floor). 0.60 is far above any of these, so the
+    # heatmap always shows on documents but the verdict never elevates in practice.
     doctamper_doc_gate_threshold: float = 0.55  # CLIP doc-vs-photo probability to treat as a document
     doctamper_backbone: str = "ViT-L-14"  # CLIP backbone for the document-gate (weights cached by the local signal)
 
