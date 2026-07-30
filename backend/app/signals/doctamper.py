@@ -75,9 +75,42 @@ def _load_doc_gate() -> Callable[[Image.Image], float]:
     return _DOC_GATE
 
 
+import base64
+
+_HEATMAP_MAX = 512  # downscale the heatmap so the base64 payload stays small
+
+
 def _localize_tamper(pil: Image.Image) -> "TamperResult":
-    """ELA tamper localization -> score + heatmap + bbox. Implemented in Task 5."""
-    raise NotImplementedError("tamper localizer wired in Task 5")
+    from app.signals.ela import compute_ela
+    from PIL import ImageOps
+
+    res = compute_ela(pil, quality=90)
+    # Score: reuse ELA's calibrated blend via its statistics.
+    from app.signals.ela import to_manipulation_score
+    score = to_manipulation_score(res.mean_diff, res.max_diff)
+
+    # Heatmap: grayscale magnitude of the diff, autocontrast, downscaled PNG.
+    gray = res.diff.convert("L")
+    heat = ImageOps.autocontrast(gray)
+    heat.thumbnail((_HEATMAP_MAX, _HEATMAP_MAX))
+    buf = BytesIO()
+    heat.save(buf, format="PNG")
+    heatmap_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    # Bbox of the hottest region: threshold the grayscale diff at a high percentile
+    # and take the bounding box of the bright mask.
+    bbox = _hot_bbox(gray)
+    return TamperResult(score=score, heatmap_png_b64=heatmap_b64, bbox=bbox)
+
+
+def _hot_bbox(gray: Image.Image) -> list:
+    """Bounding box [x,y,w,h] of the brightest region of the diff, or whole image."""
+    hi = gray.point(lambda p: 255 if p >= 200 else 0)
+    box = hi.getbbox()
+    if box is None:
+        return [0, 0, gray.width, gray.height]
+    x0, y0, x1, y1 = box
+    return [x0, y0, x1 - x0, y1 - y0]
 
 
 class DocTamperSignal(Signal):

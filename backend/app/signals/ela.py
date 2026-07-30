@@ -36,7 +36,7 @@ from app.signals.base import ImageInput, Signal
 # that re-saved/spliced regions stand out.
 _QUALITY = 90
 
-# Normalization anchors (see _to_manipulation_score). Difference values are in
+# Normalization anchors (see to_manipulation_score). Difference values are in
 # 0..255 per channel. Untouched, uniformly-compressed images typically show a
 # small mean diff and a modest max; edited images push both up, especially the
 # mean (broad, uneven error). These thresholds are deliberately rough — ELA is a
@@ -93,7 +93,7 @@ class ElaSignal(Signal):
         res = compute_ela(original, _QUALITY)
         max_diff, mean_diff = res.max_diff, res.mean_diff
 
-        manipulation_score = _to_manipulation_score(mean_diff, max_diff)
+        manipulation_score = to_manipulation_score(mean_diff, max_diff)
 
         notes = [
             f"ELA at JPEG quality {_QUALITY}: mean diff {mean_diff:.2f}, "
@@ -137,7 +137,7 @@ def _band_means(diff: Image.Image) -> list[float]:
     return means
 
 
-def _to_manipulation_score(mean_diff: float, max_diff: float) -> float:
+def to_manipulation_score(mean_diff: float, max_diff: float) -> float:
     """Map ELA difference statistics to a manipulation likelihood in [0, 1].
 
     Higher and more uneven error levels -> higher manipulation_score. We blend

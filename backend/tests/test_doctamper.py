@@ -103,6 +103,26 @@ _REF = os.path.expanduser("~/Downloads/photos")
 _has_ref = os.path.isdir(_REF)
 
 
+def test_localizer_flags_a_pasted_region_and_returns_heatmap():
+    import base64
+    # A flat JPEG-compressed image with a sharp bright square pasted in — the
+    # square is a "splice": it recompresses very differently from the flat field.
+    from PIL import Image as I
+    import io as _io
+    base = I.new("RGB", (128, 128), (110, 110, 110))
+    buf = _io.BytesIO(); base.save(buf, format="JPEG", quality=90)
+    doc = I.open(_io.BytesIO(buf.getvalue())).convert("RGB")
+    doc.paste((240, 20, 20), (80, 80, 120, 120))  # pasted bright square, not recompressed
+    res = dt._localize_tamper(doc)
+    assert 0.0 <= res.score <= 1.0
+    assert res.score > 0.0
+    # heatmap is a decodable PNG
+    raw = base64.b64decode(res.heatmap_png_b64)
+    assert raw[:8] == b"\x89PNG\r\n\x1a\n"
+    # bbox is 4 ints within the image
+    assert len(res.bbox) == 4 and all(isinstance(v, int) for v in res.bbox)
+
+
 @pytest.mark.skipif(not _has_ref, reason="reference images not present")
 def test_doc_gate_ranks_document_over_photo():
     gate = dt._load_doc_gate()
