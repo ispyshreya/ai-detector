@@ -89,3 +89,8 @@ async def test_loader_failure_is_reported_not_raised(monkeypatch):
     r = await dt.DocTamperSignal().analyze(_img())
     assert r.status.value == "error"
     assert "clip load failed" in (r.error or "")
+
+
+def test_doctamper_registered():
+    from app.signals.registry import all_signals
+    assert any(s.name == "doctamper" for s in all_signals())
