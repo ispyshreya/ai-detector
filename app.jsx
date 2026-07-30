@@ -101,6 +101,7 @@ const mapEnvelope = (envelope) => {
     sightengine: toDetector(find("sightengine")),
     hive: toDetector(find("hive")),
     faceswap: toDetector(find("faceswap")),
+    doctamper: toDetector(find("doctamper")),
   };
 };
 
@@ -138,10 +139,16 @@ const buildComparison = (detectors) => {
   const FACE_SWAP_THRESHOLD = 0.80;
   const faceManipulation = faceSwapScore != null && faceSwapScore >= FACE_SWAP_THRESHOLD;
 
+  const docTamperScore = detectors.doctamper?.deepfake ?? null;   // manipulation_score
+  // Keep DOC_TAMPER_THRESHOLD in sync with backend doctamper_threshold (config.py).
+  const DOC_TAMPER_THRESHOLD = 0.60;
+  const documentEdit = docTamperScore != null && docTamperScore >= DOC_TAMPER_THRESHOLD;
+  const docHeatmap = detectors.doctamper?.raw?.heatmap_png_b64 ?? null;
+
   if (usableScores.length === 0) {
     if (faceManipulation) {
       return {
-        overallScore: 0.6,
+        overallScore: documentEdit ? Math.max(0.6, 0.6) : 0.6,
         confidence: faceSwapScore ?? 0.6,
         inconclusive: false,
         disagreement: 0,
@@ -151,36 +158,45 @@ const buildComparison = (detectors) => {
           "However, the face-swap detector flagged possible face manipulation above the confidence threshold.",
         ],
         userSummary: [
+          ...(documentEdit
+            ? ["Possible document edit detected — a region may have been altered. Verify directly with the issuing institution."]
+            : []),
           "Possible face manipulation detected — the face may be swapped or composited. Verify the source.",
           "No general AI detector returned a score, so Veil cannot confirm whether the image as a whole is AI-generated.",
         ],
         visualChecks: [],
         nextSteps: [],
+        docHeatmap: null,
         rawScores: {
           local: null,
           sightengine: null,
           hive: null,
           deepfake: deepfakeScore ?? null,
           faceswap: faceSwapScore,
+          doctamper: docTamperScore,
         },
       };
     }
     return {
-      overallScore: null,
+      overallScore: documentEdit ? Math.max(null ?? 0, 0.6) : null,
       confidence: null,
       inconclusive: false,
       disagreement: 0,
       agreement: "No detector scores available",
       explanation: ["Neither detector returned a usable AI-generation score."],
-      userSummary: [],
+      userSummary: documentEdit
+        ? ["Possible document edit detected — a region may have been altered. Verify directly with the issuing institution."]
+        : [],
       visualChecks: [],
       nextSteps: [],
+      docHeatmap: null,
       rawScores: {
         local: null,
         sightengine: null,
         hive: null,
         deepfake: deepfakeScore ?? null,
         faceswap: faceSwapScore,
+        doctamper: docTamperScore,
       },
     };
   }
@@ -274,13 +290,18 @@ const buildComparison = (detectors) => {
     }
   }
 
+  if (documentEdit) {
+    userSummary.unshift(
+      "Possible document edit detected — a region may have been altered. Verify directly with the issuing institution."
+    );
+  }
   if (faceManipulation) {
     userSummary.unshift(
       "Possible face manipulation detected — the face may be swapped or composited. Verify the source."
     );
   }
-  // Raise the effective score to at least "Needs review" (>=0.4) when face manipulation is confident.
-  const effectiveScore = faceManipulation
+  // Raise the effective score to at least "Needs review" (>=0.6) when face manipulation or document edit is confident.
+  const effectiveScore = (faceManipulation || documentEdit)
     ? Math.max(overallScore ?? 0, 0.6)   // >=0.4 => "Needs review" per verdictLabel
     : overallScore;
 
@@ -307,12 +328,14 @@ const buildComparison = (detectors) => {
     visualChecks,
     userSummary,
     nextSteps,
+    docHeatmap,
     rawScores: {
       local: detectorScores.find(([name]) => name === "local")?.[1] ?? null,
       sightengine: detectorScores.find(([name]) => name === "sightengine")?.[1] ?? null,
       hive: detectorScores.find(([name]) => name === "hive")?.[1] ?? null,
       deepfake: deepfakeScore,
       faceswap: faceSwapScore,
+      doctamper: docTamperScore,
     },
   };
 };
@@ -635,6 +658,16 @@ function App() {
                   </div>
                 )}
               </div>
+
+              {scan.comparison.docHeatmap && (
+                <figure className="doc-heatmap">
+                  <img
+                    alt="Tamper heatmap — brighter regions changed most under recompression"
+                    src={`data:image/png;base64,${scan.comparison.docHeatmap}`}
+                  />
+                  <figcaption>Tamper heatmap — brighter = more likely edited. Verify with the issuer.</figcaption>
+                </figure>
+              )}
 
               <div className="explanation-card primary-explanation">
                 <p className="eyebrow">Why Veil rated this</p>
